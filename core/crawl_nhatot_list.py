@@ -24,6 +24,7 @@ DETAIL_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 DEFAULT_OUTPUT = Path("nhatot_list_detail.csv")
+OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "url", "source", "listing_date", "category_url"]
 
 
 def normalize_detail_url(href: str | None) -> str | None:
@@ -141,12 +142,19 @@ def wait_for_listing_ready(driver) -> None:
 
 def save_results(rows: list[dict], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_csv(output_path, index=False, encoding="utf-8-sig")
+    normalized_rows: list[dict] = []
+    for index, row in enumerate(rows, start=1):
+        normalized_row = {column: row.get(column) for column in OUTPUT_COLUMNS}
+        normalized_row["STT"] = index
+        normalized_rows.append(normalized_row)
+    pd.DataFrame(normalized_rows, columns=OUTPUT_COLUMNS).to_csv(output_path, index=False, encoding="utf-8-sig")
 
 
 def attach_source(row: dict) -> dict:
     normalized_row = dict(row)
     normalized_row["source"] = SOURCE_NAME
+    normalized_row["listing_date"] = None
+    normalized_row["category_url"] = None
     return normalized_row
 
 
