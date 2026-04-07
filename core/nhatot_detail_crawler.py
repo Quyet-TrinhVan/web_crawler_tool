@@ -16,6 +16,7 @@ DEFAULT_URL = "https://www.nhatot.com/mua-ban-can-ho-chung-cu-quan-7-tp-ho-chi-m
 STATE_DIR = Path("browser_state")
 USER_DATA_DIR = STATE_DIR / "nhatot_chrome_profile"
 DEFAULT_OUTPUT = Path("nhatot_detail.csv")
+SOURCE_NAME = "nhatot.com"
 SECURITY_PAGE_MARKERS = (
     "performing security verification",
     "verifying you are not a bot",
@@ -25,6 +26,8 @@ SECURITY_PAGE_MARKERS = (
 
 PHONE_SCAN_SELECTORS = [
     "a[href^='tel:']",
+    "[data-selenium*='phone']",
+    "[data-selenium*='contact']",
     "button",
     "a",
     "[role='button']",
@@ -129,6 +132,7 @@ def looks_like_location_line(text: str | None, title: str | None = None) -> bool
 def build_driver() -> webdriver.Chrome:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     options = Options()
+    options.page_load_strategy = "eager"
     options.add_argument(f"--user-data-dir={USER_DATA_DIR.resolve()}")
     options.add_argument("--profile-directory=Default")
     options.add_argument("--start-maximized")
@@ -152,25 +156,25 @@ def build_driver() -> webdriver.Chrome:
 
 def wait_for_page_ready(driver: webdriver.Chrome) -> None:
     log("Dang cho trang chi tiet san sang.")
-    deadline = time.time() + 25
+    deadline = time.time() + 15
     while time.time() < deadline:
         title = get_title(driver)
         if title and not is_security_verification_page(driver) and title.lower() != "www.nhatot.com":
             log("Da thay title chi tiet.")
             return
-        time.sleep(1)
+        time.sleep(0.25)
 
     log("Trang dang o man hinh security verification.")
     log("Hay hoan tat xac minh trong cua so Chrome, sau do nhan Enter de tiep tuc crawl.")
     input()
 
-    deadline = time.time() + 30
+    deadline = time.time() + 20
     while time.time() < deadline:
         title = get_title(driver)
         if title and not is_security_verification_page(driver) and title.lower() != "www.nhatot.com":
             log("Da thay title chi tiet.")
             return
-        time.sleep(1)
+        time.sleep(0.25)
 
     raise RuntimeError("Khong vuot qua duoc security verification hoac khong thay title tren trang NhaTot.")
 
@@ -196,7 +200,7 @@ def dismiss_cookie_banner(driver: webdriver.Chrome) -> None:
                     continue
                 driver.execute_script("arguments[0].click();", element)
                 log("Da dong cookie banner.")
-                time.sleep(0.5)
+                time.sleep(0.15)
                 return
         except WebDriverException:
             pass
@@ -214,6 +218,22 @@ def get_text(driver: webdriver.Chrome, selectors: list[str]) -> str | None:
         except WebDriverException:
             pass
     return None
+
+
+def has_visible_phone_button(driver: webdriver.Chrome) -> bool:
+    try:
+        for selector in (
+            "a[href^='tel:']",
+            "[data-selenium*='phone']",
+            "[class*='phone']",
+            "[class*='call']",
+        ):
+            for element in driver.find_elements(By.CSS_SELECTOR, selector):
+                if element.is_displayed() and clean_text(element.text):
+                    return True
+    except WebDriverException:
+        pass
+    return False
 
 
 def get_body_text(driver: webdriver.Chrome) -> str:
@@ -475,12 +495,12 @@ def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
         try:
             log("Dang click nut hien so.")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-            time.sleep(0.5)
+            time.sleep(0.15)
             try:
                 element.click()
             except WebDriverException:
                 driver.execute_script("arguments[0].click();", element)
-            time.sleep(1.5)
+            time.sleep(0.35)
 
             phone = scan_phone_from_dom(driver)
             if phone:
@@ -493,35 +513,50 @@ def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
     return None
 
 
+def ensure_detail_page_ready(driver: webdriver.Chrome, url: str) -> None:
+    log(f"Mo URL: {url}")
+    driver.get(url)
+    wait_for_page_ready(driver)
+    dismiss_cookie_banner(driver)
+    deadline = time.time() + 4
+    while time.time() < deadline:
+        if get_title(driver) and (get_price(driver) or get_area(driver) or has_visible_phone_button(driver)):
+            return
+        time.sleep(0.2)
+
+
+def extract_detail_fields(driver: webdriver.Chrome, url: str) -> dict:
+    title = get_title(driver)
+    log(f"Title: {title!r}")
+    price = get_price(driver)
+    log(f"Price: {price!r}")
+    area = get_area(driver)
+    log(f"Area: {area!r}")
+    location = get_location(driver)
+    log(f"Location: {location!r}")
+    phone = click_show_phone_and_get(driver)
+    log(f"Phone: {phone!r}")
+
+    return {
+        "title": title,
+        "area": area,
+        "location": location,
+        "phone": phone,
+        "price": price,
+        "url": url,
+    }
+
+
+def crawl_detail_with_driver(driver: webdriver.Chrome, url: str) -> dict:
+    ensure_detail_page_ready(driver, url)
+    return extract_detail_fields(driver, url)
+
+
 def crawl_detail(url: str) -> dict:
     log("Khoi tao Chrome.")
     driver = build_driver()
     try:
-        log(f"Mo URL: {url}")
-        driver.get(url)
-        wait_for_page_ready(driver)
-        dismiss_cookie_banner(driver)
-        time.sleep(1.5)
-
-        title = get_title(driver)
-        log(f"Title: {title!r}")
-        price = get_price(driver)
-        log(f"Price: {price!r}")
-        area = get_area(driver)
-        log(f"Area: {area!r}")
-        location = get_location(driver)
-        log(f"Location: {location!r}")
-        phone = click_show_phone_and_get(driver)
-        log(f"Phone: {phone!r}")
-
-        return {
-            "title": title,
-            "area": area,
-            "location": location,
-            "phone": phone,
-            "price": price,
-            "url": url,
-        }
+        return crawl_detail_with_driver(driver, url)
     finally:
         driver.quit()
 

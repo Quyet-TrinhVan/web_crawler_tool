@@ -21,6 +21,7 @@ from core.detail_crawler import (
 DETAIL_URL_RE = re.compile(r"^https://batdongsan\.com\.vn/.+-pr\d+(?:\?.*)?$", re.IGNORECASE)
 DETAIL_PATH_RE = re.compile(r"https://batdongsan\.com\.vn/[^\"'?#\s]+-pr\d+(?:\?[^\"'#\s]*)?", re.IGNORECASE)
 DEFAULT_OUTPUT = Path("batdongsan_list_detail.csv")
+SOURCE_NAME = "batdongsan.com"
 
 
 def normalize_detail_url(href: str | None) -> str | None:
@@ -83,7 +84,30 @@ def collect_detail_links_from_page(driver) -> list[str]:
 
 
 def save_results(rows: list[dict], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(rows).to_csv(output_path, index=False, encoding="utf-8-sig")
+
+
+def attach_source(row: dict) -> dict:
+    normalized_row = dict(row)
+    normalized_row["source"] = SOURCE_NAME
+    return normalized_row
+
+
+def discover_listing_links_on_page(driver, start_url: str, page_number: int) -> list[str]:
+    if page_number < 1:
+        raise ValueError("page_number phai >= 1")
+
+    page_url = build_paginated_url(start_url, page_number)
+    log(f"[list_crawler] Mo trang danh sach {page_number}: {page_url}")
+    driver.get(page_url)
+    wait_for_listing_ready(driver)
+    dismiss_cookie_banner(driver)
+    time.sleep(2)
+
+    page_links = collect_detail_links_from_page(driver)
+    log(f"[list_crawler] Tim thay {len(page_links)} link tin tren trang {page_number}.")
+    return page_links
 
 
 def discover_listing_links(driver, start_url: str, max_pages: int | None) -> list[str]:
@@ -133,6 +157,44 @@ def discover_listing_links(driver, start_url: str, max_pages: int | None) -> lis
     return discovered
 
 
+def crawl_listing_page(start_url: str, page_number: int, output_path: Path | None = None) -> list[dict]:
+    if page_number < 1:
+        raise ValueError("page_number phai >= 1")
+
+    log("[list_crawler] Khoi tao Chrome.")
+    driver = build_driver()
+    rows: list[dict] = []
+
+    try:
+        log(f"[list_crawler] Mo URL bat dau: {start_url}")
+        driver.get(start_url)
+        wait_for_listing_ready(driver)
+        dismiss_cookie_banner(driver)
+
+        if not is_logged_in(driver):
+            raise RuntimeError(
+                "Chrome profile hien tai chua dang nhap Batdongsan. "
+                "Hay chay `uv run -m core.login_batdongsan` bang cung browser profile roi thu lai."
+            )
+
+        detail_urls = discover_listing_links_on_page(driver, start_url, page_number)
+        log(f"[list_crawler] Tong so tin se crawl o trang {page_number}: {len(detail_urls)}")
+
+        for index, detail_url in enumerate(detail_urls, start=1):
+            log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
+            try:
+                row = attach_source(crawl_detail_with_driver(driver, detail_url))
+                rows.append(row)
+                if output_path is not None:
+                    save_results(rows, output_path)
+            except Exception as exc:
+                log(f"[list_crawler] Loi voi {detail_url}: {exc}")
+
+        return rows
+    finally:
+        driver.quit()
+
+
 def crawl_listing(start_url: str, output_path: Path, max_pages: int | None, limit: int | None) -> list[dict]:
     log("[list_crawler] Khoi tao Chrome.")
     driver = build_driver()
@@ -159,7 +221,7 @@ def crawl_listing(start_url: str, output_path: Path, max_pages: int | None, limi
         for index, detail_url in enumerate(detail_urls, start=1):
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
-                row = crawl_detail_with_driver(driver, detail_url)
+                row = attach_source(crawl_detail_with_driver(driver, detail_url))
                 rows.append(row)
                 save_results(rows, output_path)
             except Exception as exc:
