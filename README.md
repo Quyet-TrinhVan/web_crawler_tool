@@ -1,20 +1,21 @@
 # Web Crawler Tool
 
-Selenium crawler cho 2 nguon:
+Tool crawl tin bat dong san bang Selenium cho 2 nguon:
 
 - `batdongsan.com.vn`
 - `nhatot.com`
 
-Repo hien tai ho tro:
+Project hien tai ho tro:
 
 - crawl chi tiet 1 tin
-- crawl 1 trang danh sach roi tu lay tat ca link con de crawl detail
-- xuat CSV `utf-8-sig` de mo tot bang Excel
+- crawl 1 trang danh sach va tu lay link detail trong trang do
+- crawl Batdongsan theo che do `today` tren nhieu category
+- xuat CSV encoding `utf-8-sig` de mo bang Excel
 
 ## Yeu cau
 
 - Python `>= 3.12`
-- Google Chrome da cai tren may
+- Google Chrome
 - `uv`
 
 ## Cai dat
@@ -43,7 +44,12 @@ uv sync
 
 ## Chay bang `main.py`
 
-`main.py` crawl dung mot trang danh sach cu the.
+`main.py` la entry point chinh. Co 2 mode:
+
+- crawl 1 trang danh sach cu the
+- crawl Batdongsan theo `--date today`
+
+### 1. Crawl 1 trang danh sach
 
 Argument:
 
@@ -61,22 +67,37 @@ uv run main.py --source batdongsan.com --page-url "https://batdongsan.com.vn/nha
 Vi du NhaTot:
 
 ```powershell
-uv run main.py --source nhatot.com --page-url "https://www.nhatot.com/mua-ban-can-ho-chung-cu-tp-ho-chi-minh" --page-number 1 --output nhatot.csv
+uv run main.py --source nhatot.com --page-url "<url-danh-sach-ha-noi>" --page-number 1 --output nhatot.csv
 ```
 
-Schema CSV hien tai:
+Luu y voi `nhatot.com`: crawler hien chi giu cac tin co `location` thuoc Ha Noi. Neu URL danh sach khong phai khu vuc Ha Noi thi output co the rong.
 
-- `title`
-- `area`
-- `location`
-- `phone`
-- `price`
-- `url`
-- `source`
+### 2. Crawl Batdongsan theo ngay hien tai
 
-## Batdongsan: dang nhap truoc khi crawl
+Mode nay chi ho tro cho `--source batdongsan.com`.
 
-Batdongsan can profile Chrome da dang nhap va da xac minh so dien thoai. Hien tai `main.py` khong tu login; can chay script login truoc.
+Argument:
+
+- `--source batdongsan.com`
+- `--date today`
+- `--output`
+
+Vi du:
+
+```powershell
+uv run main.py --source batdongsan.com --date today --output batdongsan_today.csv
+```
+
+Trong mode nay:
+
+- script duyet danh sach category co san trong code
+- chi giu cac tin dang trong ngay hien tai
+- chi giu tin co `location` thuoc Ha Noi
+- `--page-url` va `--page-number` khong can truyen
+
+## Batdongsan: login truoc khi crawl
+
+Batdongsan can Chrome profile da dang nhap. De tao profile persistent:
 
 ```powershell
 uv run -m core.login_batdongsan
@@ -84,10 +105,10 @@ uv run -m core.login_batdongsan
 
 Flow:
 
-1. Chrome mo voi persistent profile tai `browser_state/chrome_profile`
-2. Ban tu vuot qua Cloudflare, dang nhap, xac minh so dien thoai neu can
+1. Chrome mo voi profile tai `browser_state/chrome_profile`
+2. Ban tu vuot qua Cloudflare, dang nhap, xac minh neu can
 3. Quay lai terminal va nhan `Enter`
-4. Sau do chay `main.py`
+4. Sau do chay crawler
 
 Profile nay se duoc tai su dung cho cac lan crawl Batdongsan sau.
 
@@ -99,13 +120,20 @@ Profile nay se duoc tai su dung cho cac lan crawl Batdongsan sau.
 uv run -m core.detail_crawler
 ```
 
-Script nay dang dung san URL mau trong file.
+Script nay dang dung URL mau hard-code trong file [core/detail_crawler.py](/d:/web_crawler_tool/core/detail_crawler.py).
 
 ### Batdongsan list
 
 ```powershell
-uv run -m core.crawl_batdongsan_list "https://batdongsan.com.vn/nha-dat-ban" --max-pages 2 --output batdongsan_list_detail.csv
+uv run -m core.crawl_batdongsan_list "https://batdongsan.com.vn/nha-dat-ban" --max-pages 2 --limit 20 --output batdongsan_list_detail.csv
 ```
+
+Argument chinh:
+
+- `url`: URL danh sach
+- `--max-pages`: so trang toi da can quet
+- `--limit`: gioi han so tin detail can crawl
+- `--output`: file CSV output
 
 ### NhaTot detail
 
@@ -113,11 +141,35 @@ uv run -m core.crawl_batdongsan_list "https://batdongsan.com.vn/nha-dat-ban" --m
 uv run -m core.nhatot_detail_crawler "https://www.nhatot.com/mua-ban-can-ho-chung-cu-quan-7-tp-ho-chi-minh/131656948.htm" --output nhatot_detail.csv
 ```
 
+Neu khong truyen URL, script se dung `DEFAULT_URL` trong file [core/nhatot_detail_crawler.py](/d:/web_crawler_tool/core/nhatot_detail_crawler.py).
+
 ### NhaTot list
 
 ```powershell
-uv run -m core.crawl_nhatot_list "https://www.nhatot.com/mua-ban-can-ho-chung-cu-tp-ho-chi-minh" --page-number 1 --output nhatot_list_detail.csv
+uv run -m core.crawl_nhatot_list "<url-danh-sach-ha-noi>" --page-number 1 --output nhatot_list_detail.csv
 ```
+
+## Schema CSV
+
+Tat ca output deu ghi theo cot:
+
+- `STT`
+- `title`
+- `area`
+- `location`
+- `phone`
+- `price`
+- `url`
+- `source`
+- `listing_date`
+- `category_url`
+
+Ghi chu:
+
+- `source` se la `batdongsan.com` hoac `nhatot.com`
+- `listing_date` va `category_url` chu yeu co y nghia voi mode Batdongsan `--date today`
+- voi NhaTot, `listing_date` va `category_url` hien tai de trong
+- voi `nhatot.com`, output hien chi giu cac tin co `location` thuoc Ha Noi
 
 ## Browser profile
 
@@ -130,16 +182,16 @@ Neu profile bi loi hoac dinh session cu, co the xoa thu muc profile tuong ung ro
 
 ## Luu y
 
-- Cac site co the hien Cloudflare hoac security verification. Khi do script se cho ban xu ly trong cua so Chrome.
-- Selector HTML cua cac site co the thay doi, nen neu dang crawl tot ma dot nhien loi thi thuong la do layout/site thay doi.
-- Batdongsan co the can tai khoan da xac minh so dien thoai de hien full phone.
-- NhaTot thuong cho click hien so ma khong can dang nhap, nhung van co the bi security verification.
+- Site co the hien Cloudflare hoac security verification. Khi do script se doi ban xu ly trong cua so Chrome va nhan `Enter` de tiep tuc.
+- Selector HTML co the thay doi. Neu dang crawl binh thuong ma dot nhien loi, kha nang cao la layout trang da doi.
+- Batdongsan thuong can tai khoan da dang nhap de lay so dien thoai.
+- NhaTot khong can login trong code hien tai, nhung van co the gap security verification.
 
-## Output
+## Xem ket qua
 
 CSV duoc ghi voi encoding `utf-8-sig`.
 
-Vi du doc ket qua:
+Vi du doc nhanh 5 dong dau:
 
 ```powershell
 Get-Content .\batdongsan.csv | Select-Object -First 5

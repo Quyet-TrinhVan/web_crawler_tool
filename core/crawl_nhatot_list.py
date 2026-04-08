@@ -15,6 +15,7 @@ from core.nhatot_detail_crawler import (
     get_body_text,
     is_security_verification_page,
     log,
+    normalize_search_text,
 )
 
 
@@ -158,6 +159,11 @@ def attach_source(row: dict) -> dict:
     return normalized_row
 
 
+def is_hanoi_location(location: str | None) -> bool:
+    normalized = normalize_search_text(location)
+    return "ha noi" in normalized if normalized else False
+
+
 def discover_listing_links_on_page(driver, start_url: str, page_number: int) -> list[str]:
     page_url = build_paginated_url(start_url, page_number)
     log(f"[list_crawler] Mo trang danh sach {page_number}: {page_url}")
@@ -178,6 +184,7 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
     log("[list_crawler] Khoi tao Chrome.")
     driver = build_driver()
     rows: list[dict] = []
+    skipped_non_hanoi = 0
 
     try:
         detail_urls = discover_listing_links_on_page(driver, start_url, page_number)
@@ -187,12 +194,17 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
                 row = attach_source(crawl_detail_with_driver(driver, detail_url))
+                if not is_hanoi_location(row.get("location")):
+                    skipped_non_hanoi += 1
+                    log(f"[list_crawler] Bo qua tin khong thuoc Ha Noi: {detail_url}")
+                    continue
                 rows.append(row)
                 if output_path is not None:
                     save_results(rows, output_path)
             except Exception as exc:
                 log(f"[list_crawler] Loi voi {detail_url}: {exc}")
 
+        log(f"[list_crawler] Tong so tin bi bo qua vi khong thuoc Ha Noi: {skipped_non_hanoi}")
         return rows
     finally:
         driver.quit()
