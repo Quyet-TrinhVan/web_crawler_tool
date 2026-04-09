@@ -1,5 +1,6 @@
 import re
 import time
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -78,6 +79,33 @@ def extract_phone_from_text(text: str | None) -> str | None:
         return None
 
     return normalize_phone(match.group(1))
+
+
+def extract_all_phones_from_text(text: str | None) -> list[str]:
+    if not text:
+        return []
+
+    matches = re.findall(r"((?:\+84|84|0)(?:3|5|7|8|9)\d(?:[\s.\-]?\d){7})", text)
+    phones: list[str] = []
+    for match in matches:
+        phone = normalize_phone(match)
+        if phone:
+            phones.append(phone)
+    return phones
+
+
+def extract_phone_from_page(driver: webdriver.Chrome) -> str | None:
+    candidates: list[str] = []
+    candidates.extend(extract_all_phones_from_text(get_body_text(driver)))
+    try:
+        candidates.extend(extract_all_phones_from_text(driver.page_source))
+    except WebDriverException:
+        pass
+
+    if not candidates:
+        return None
+
+    return Counter(candidates).most_common(1)[0][0]
 
 
 def build_driver() -> webdriver.Chrome:
@@ -298,6 +326,27 @@ def first_visible_element(driver: webdriver.Chrome, selectors: list[str]):
     return None
 
 
+def visible_elements(driver: webdriver.Chrome, selectors: list[str], max_count: int = 5) -> list:
+    elements: list = []
+    seen_ids: set[str] = set()
+
+    for selector in selectors:
+        try:
+            for element in driver.find_elements(By.CSS_SELECTOR, selector):
+                if not element.is_displayed():
+                    continue
+                if element.id in seen_ids:
+                    continue
+                seen_ids.add(element.id)
+                elements.append(element)
+                if len(elements) >= max_count:
+                    return elements
+        except WebDriverException:
+            pass
+
+    return elements
+
+
 def extract_phone_from_element(element) -> str | None:
     for attr_name in PHONE_ATTRIBUTE_NAMES:
         try:
@@ -385,37 +434,53 @@ def extract_phone_from_ancestors(element) -> str | None:
 
 def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
     log("Dang tim nut hien so.")
-    element = first_visible_element(driver, PHONE_BUTTON_SELECTORS)
-    if element is None:
+    phone = extract_phone_from_page(driver)
+    if phone:
+        log("Da lay duoc so dien thoai tu noi dung trang truoc khi click.")
+        return phone
+
+    elements = visible_elements(driver, PHONE_BUTTON_SELECTORS, max_count=5)
+    if not elements:
         log("Khong tim thay nut hien so.")
-        return None
+        return extract_phone_from_page(driver)
 
-    phone = extract_phone_from_element(element)
-    if phone:
-        log("Da lay duoc so dien thoai truoc khi click.")
-        return phone
+    for idx, element in enumerate(elements, start=1):
+        phone = extract_phone_from_element(element)
+        if phone:
+            log("Da lay duoc so dien thoai truoc khi click.")
+            return phone
 
-    try:
-        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-        time.sleep(0.5)
         try:
-            element.click()
+            log(f"Thu click nut hien so {idx}/{len(elements)}.")
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+            time.sleep(0.5)
+            try:
+                element.click()
+            except WebDriverException:
+                driver.execute_script("arguments[0].click();", element)
         except WebDriverException:
-            driver.execute_script("arguments[0].click();", element)
-    except WebDriverException:
-        log("Click nut hien so that bai.")
-        return None
+            continue
 
-    log("Da click nut hien so, dang cho trang thai cap nhat.")
-    wait_for_phone_state(element)
+        log("Da click nut hien so, dang cho trang thai cap nhat.")
+        wait_for_phone_state(element)
 
-    phone = extract_phone_from_element(element)
-    if phone:
-        log("Da lay duoc so dien thoai sau khi click.")
-        return phone
+        phone = extract_phone_from_element(element)
+        if phone:
+            log("Da lay duoc so dien thoai sau khi click.")
+            return phone
 
-    log("Khong thay so tren button, thu doc tu cac the cha.")
-    return extract_phone_from_ancestors(element)
+        phone = extract_phone_from_ancestors(element)
+        if phone:
+            log("Da lay duoc so dien thoai tu the cha sau khi click.")
+            return phone
+
+        phone = extract_phone_from_page(driver)
+        if phone:
+            log("Da lay duoc so dien thoai tu noi dung trang sau khi click.")
+            return phone
+
+    log("Khong lay duoc so tren button, thu fallback doc toan trang.")
+    return extract_phone_from_page(driver)
 
 
 def ensure_authenticated_listing_page(driver: webdriver.Chrome, url: str) -> None:

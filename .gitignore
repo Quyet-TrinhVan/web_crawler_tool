@@ -12,3 +12,5 @@ wheels/
 # Local browser session state
 playwright_state/
 browser_state/
+*.csv
+*.xlsx

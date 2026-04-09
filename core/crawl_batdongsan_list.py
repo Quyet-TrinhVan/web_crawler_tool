@@ -1,4 +1,5 @@
 import argparse
+import random
 import re
 import time
 import unicodedata
@@ -29,6 +30,10 @@ ABSOLUTE_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 DEFAULT_OUTPUT = Path("batdongsan_list_detail.csv")
 SOURCE_NAME = "batdongsan.com"
 OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
+PAGE_SETTLE_DELAY_RANGE_SECONDS = (10.0, 14.0)
+DETAIL_DELAY_RANGE_SECONDS = (8.0, 15.0)
+DETAIL_RETRY_DELAY_SECONDS = 5.0
+MAX_DETAIL_ATTEMPTS = 3
 
 FALLBACK_CATEGORY_PATHS = [
     "/ban-can-ho-chung-cu",
@@ -131,6 +136,60 @@ def is_hanoi_location(location: str | None) -> bool:
     return "ha noi" in normalized if normalized else False
 
 
+def anti_spam_pause(label: str, delay_range: tuple[float, float]) -> None:
+    delay = random.uniform(*delay_range)
+    log(f"[list_crawler] Tam dung {delay:.1f}s de giam tan suat request ({label}).")
+    time.sleep(delay)
+
+
+def has_meaningful_detail_data(row: dict | None) -> bool:
+    if not row:
+        return False
+
+    title = clean_text(row.get("title"))
+    if not title:
+        return False
+
+    return any(clean_text(row.get(field)) for field in ("location", "price", "area", "phone"))
+
+
+def should_retry_detail(row: dict | None) -> bool:
+    if not has_meaningful_detail_data(row):
+        return True
+
+    # So dien thoai la truong quan trong, neu chua co thi thu lai them de giam miss.
+    return clean_text((row or {}).get("phone")) is None
+
+
+def crawl_detail_with_retries(driver, detail_url: str, max_attempts: int = MAX_DETAIL_ATTEMPTS) -> dict | None:
+    last_row: dict | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            row = crawl_detail_with_driver(driver, detail_url)
+            last_row = row
+
+            if not should_retry_detail(row):
+                return row
+
+            if attempt < max_attempts:
+                log(
+                    f"[list_crawler] Tin {detail_url} du lieu chua day du"
+                    f" (attempt {attempt}/{max_attempts}), thu lai sau {DETAIL_RETRY_DELAY_SECONDS:.0f}s."
+                )
+                time.sleep(DETAIL_RETRY_DELAY_SECONDS)
+        except Exception as exc:
+            if attempt >= max_attempts:
+                raise
+            log(
+                f"[list_crawler] Loi tam thoi voi {detail_url} (attempt {attempt}/{max_attempts}): {exc}."
+                f" Thu lai sau {DETAIL_RETRY_DELAY_SECONDS:.0f}s."
+            )
+            time.sleep(DETAIL_RETRY_DELAY_SECONDS)
+
+    return last_row if has_meaningful_detail_data(last_row) else None
+
+
 def collect_detail_links_from_page(driver) -> list[str]:
     seen: set[str] = set()
     links: list[str] = []
@@ -189,7 +248,7 @@ def discover_listing_links_on_page(driver, start_url: str, page_number: int) -> 
     driver.get(page_url)
     wait_for_listing_ready(driver)
     dismiss_cookie_banner(driver)
-    time.sleep(2)
+    anti_spam_pause("sau khi mo trang danh sach", PAGE_SETTLE_DELAY_RANGE_SECONDS)
 
     page_links = collect_detail_links_from_page(driver)
     log(f"[list_crawler] Tim thay {len(page_links)} link tin tren trang {page_number}.")
@@ -211,7 +270,7 @@ def discover_listing_links(driver, start_url: str, max_pages: int | None) -> lis
         driver.get(page_url)
         wait_for_listing_ready(driver)
         dismiss_cookie_banner(driver)
-        time.sleep(2)
+        anti_spam_pause("sau khi mo trang danh sach", PAGE_SETTLE_DELAY_RANGE_SECONDS)
 
         current_url = driver.current_url
         if current_url in seen_page_urls:
@@ -377,7 +436,7 @@ def crawl_category_for_today(
         driver.get(page_url)
         wait_for_listing_ready(driver)
         dismiss_cookie_banner(driver)
-        time.sleep(1)
+        anti_spam_pause("sau khi mo category page", PAGE_SETTLE_DELAY_RANGE_SECONDS)
 
         today_entries = collect_listing_cards_with_date(driver, target_date=target_date)
         new_entries = [entry for entry in today_entries if entry["url"] not in seen_detail_urls]
@@ -393,13 +452,17 @@ def crawl_category_for_today(
 
         for entry in new_entries:
             seen_detail_urls.add(entry["url"])
+            anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
             log(f"[list_crawler] Crawl tin hom nay: {entry['url']}")
             try:
-                row = attach_source(
-                    crawl_detail_with_driver(driver, entry["url"]),
-                    listing_date=entry["listing_date"],
-                    category_url=category_url,
-                )
+                detail_row = crawl_detail_with_retries(driver, entry["url"])
+                if not has_meaningful_detail_data(detail_row):
+                    log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {entry['url']}")
+                    continue
+                if detail_row is None:
+                    continue
+
+                row = attach_source(detail_row, listing_date=entry["listing_date"], category_url=category_url)
                 if not is_hanoi_location(row.get("location")):
                     skipped_non_hanoi += 1
                     log(f"[list_crawler] Bo qua tin khong thuoc Ha Noi: {entry['url']}")
@@ -478,9 +541,17 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
         log(f"[list_crawler] Tong so tin se crawl o trang {page_number}: {len(detail_urls)}")
 
         for index, detail_url in enumerate(detail_urls, start=1):
+            anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
-                row = attach_source(crawl_detail_with_driver(driver, detail_url))
+                detail_row = crawl_detail_with_retries(driver, detail_url)
+                if not has_meaningful_detail_data(detail_row):
+                    log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {detail_url}")
+                    continue
+                if detail_row is None:
+                    continue
+
+                row = attach_source(detail_row)
                 rows.append(row)
                 if output_path is not None:
                     save_results(rows, output_path)
@@ -516,9 +587,17 @@ def crawl_listing(start_url: str, output_path: Path, max_pages: int | None, limi
         log(f"[list_crawler] Tong so tin se crawl: {len(detail_urls)}")
 
         for index, detail_url in enumerate(detail_urls, start=1):
+            anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
-                row = attach_source(crawl_detail_with_driver(driver, detail_url))
+                detail_row = crawl_detail_with_retries(driver, detail_url)
+                if not has_meaningful_detail_data(detail_row):
+                    log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {detail_url}")
+                    continue
+                if detail_row is None:
+                    continue
+
+                row = attach_source(detail_row)
                 rows.append(row)
                 save_results(rows, output_path)
             except Exception as exc:
