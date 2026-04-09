@@ -28,7 +28,7 @@ RELATIVE_TODAY_RE = re.compile(r"\b\d+\s*(phut|gio)\s*truoc\b", re.IGNORECASE)
 ABSOLUTE_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 DEFAULT_OUTPUT = Path("batdongsan_list_detail.csv")
 SOURCE_NAME = "batdongsan.com"
-OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "url", "source", "listing_date", "category_url"]
+OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
 
 FALLBACK_CATEGORY_PATHS = [
     "/ban-can-ho-chung-cu",

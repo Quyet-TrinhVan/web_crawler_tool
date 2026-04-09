@@ -10,7 +10,7 @@ from core.crawl_batdongsan_list import (
 from core.crawl_nhatot_list import crawl_listing_page as crawl_nhatot_listing_page
 
 
-ROW_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "url", "source", "listing_date", "category_url"]
+ROW_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
 
 
 def log(message: str) -> None:
@@ -45,7 +45,6 @@ def normalize_rows(rows: list[dict], source: str) -> list[dict]:
     for index, row in enumerate(rows, start=1):
         normalized_row = {column: row.get(column) for column in ROW_COLUMNS}
         normalized_row["STT"] = index
-        normalized_row["source"] = row.get("source") or source
         normalized_rows.append(normalized_row)
     return normalized_rows
 

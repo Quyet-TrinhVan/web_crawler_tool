@@ -159,14 +159,11 @@ Tat ca output deu ghi theo cot:
 - `location`
 - `phone`
 - `price`
-- `url`
-- `source`
 - `listing_date`
 - `category_url`
 
 Ghi chu:
 
-- `source` se la `batdongsan.com` hoac `nhatot.com`
 - `listing_date` va `category_url` chu yeu co y nghia voi mode Batdongsan `--date today`
 - voi NhaTot, `listing_date` va `category_url` hien tai de trong
 - voi `nhatot.com`, output hien chi giu cac tin co `location` thuoc Ha Noi

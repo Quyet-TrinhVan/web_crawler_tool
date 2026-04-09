@@ -25,7 +25,7 @@ DETAIL_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 DEFAULT_OUTPUT = Path("nhatot_list_detail.csv")
-OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "url", "source", "listing_date", "category_url"]
+OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
 
 
 def normalize_detail_url(href: str | None) -> str | None:
