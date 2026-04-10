@@ -1,0 +1,15 @@
+services:
+  web-crawler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+      - "6080:6080"
+    environment:
+      BROWSER_PROFILE_NAMESPACE: docker
+      NOVNC_PUBLIC_URL: http://localhost:6080/vnc.html?autoconnect=1&resize=remote
+      MANUAL_ACTION_TIMEOUT_SECONDS: "900"
+    volumes:
+      - ./browser_state:/app/browser_state
+    shm_size: "1gb"

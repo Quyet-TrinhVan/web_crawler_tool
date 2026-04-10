@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import time
 from pathlib import Path
@@ -7,6 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 import pandas as pd
 from selenium.common.exceptions import WebDriverException
 
+from core.browser_session import wait_for_user_action
 from core.nhatot_detail_crawler import (
     SOURCE_NAME,
     build_driver,
@@ -26,6 +28,7 @@ DETAIL_PATH_RE = re.compile(
 )
 DEFAULT_OUTPUT = Path("nhatot_list_detail.csv")
 OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
+MANUAL_ACTION_TIMEOUT_SECONDS = float(os.getenv("MANUAL_ACTION_TIMEOUT_SECONDS", "900"))
 
 
 def normalize_detail_url(href: str | None) -> str | None:
@@ -128,8 +131,13 @@ def wait_for_listing_ready(driver) -> None:
         time.sleep(0.25)
 
     log("[list_crawler] Trang dang o man hinh security verification hoac chua hien danh sach.")
-    log("[list_crawler] Hay hoan tat xac minh trong cua so Chrome, sau do nhan Enter de tiep tuc crawl.")
-    input()
+    log("[list_crawler] Hay hoan tat xac minh trong browser/noVNC, sau do bam nut tiep tuc tren Web UI.")
+    wait_for_user_action(
+        source="nhatot.com",
+        mode="verification",
+        message="NhaTot dang cho ban hoan tat security verification tren trang danh sach.",
+        timeout_seconds=MANUAL_ACTION_TIMEOUT_SECONDS,
+    )
 
     deadline = time.time() + 20
     while time.time() < deadline:

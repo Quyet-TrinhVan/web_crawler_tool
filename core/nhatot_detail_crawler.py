@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import time
 import unicodedata
@@ -8,15 +9,18 @@ from pathlib import Path
 import pandas as pd
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+
+from core.browser_runtime import NHATOT_USER_DATA_DIR
+from core.browser_runtime import build_driver as build_browser_driver
+from core.browser_session import wait_for_user_action
 
 
 DEFAULT_URL = "https://www.nhatot.com/mua-ban-can-ho-chung-cu-quan-7-tp-ho-chi-minh/131656948.htm"
-STATE_DIR = Path("browser_state")
-USER_DATA_DIR = STATE_DIR / "nhatot_chrome_profile"
+USER_DATA_DIR = NHATOT_USER_DATA_DIR
 DEFAULT_OUTPUT = Path("nhatot_detail.csv")
 SOURCE_NAME = "nhatot.com"
+MANUAL_ACTION_TIMEOUT_SECONDS = float(os.getenv("MANUAL_ACTION_TIMEOUT_SECONDS", "900"))
 SECURITY_PAGE_MARKERS = (
     "performing security verification",
     "verifying you are not a bot",
@@ -130,28 +134,7 @@ def looks_like_location_line(text: str | None, title: str | None = None) -> bool
 
 
 def build_driver() -> webdriver.Chrome:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    options = Options()
-    options.page_load_strategy = "eager"
-    options.add_argument(f"--user-data-dir={USER_DATA_DIR.resolve()}")
-    options.add_argument("--profile-directory=Default")
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-
-    driver = webdriver.Chrome(options=options)
-    driver.execute_cdp_cmd(
-        "Page.addScriptToEvaluateOnNewDocument",
-        {
-            "source": """
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """
-        },
-    )
-    return driver
+    return build_browser_driver(USER_DATA_DIR, page_load_strategy="eager")
 
 
 def wait_for_page_ready(driver: webdriver.Chrome) -> None:
@@ -165,8 +148,13 @@ def wait_for_page_ready(driver: webdriver.Chrome) -> None:
         time.sleep(0.25)
 
     log("Trang dang o man hinh security verification.")
-    log("Hay hoan tat xac minh trong cua so Chrome, sau do nhan Enter de tiep tuc crawl.")
-    input()
+    log("Hay hoan tat xac minh trong browser/noVNC, sau do bam nut tiep tuc tren Web UI.")
+    wait_for_user_action(
+        source="nhatot.com",
+        mode="verification",
+        message="NhaTot dang cho ban hoan tat security verification trong browser/noVNC.",
+        timeout_seconds=MANUAL_ACTION_TIMEOUT_SECONDS,
+    )
 
     deadline = time.time() + 20
     while time.time() < deadline:

@@ -1,18 +1,21 @@
+import os
 import re
 import time
 from collections import Counter
-from pathlib import Path
 
 import pandas as pd
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+
+from core.browser_runtime import BATDONGSAN_USER_DATA_DIR
+from core.browser_runtime import build_driver as build_browser_driver
+from core.browser_session import wait_for_user_action
 
 
 URL = "https://batdongsan.com.vn/ban-nha-biet-thu-lien-ke-duong-tinh-lo-824-xa-an-thanh-3-khu-do-thi-waterpoint/6-8-ty-toan-nhe-nhang-trong-3-nam-so-huu-villa-don-lap-vip-tai-the-pearl-kdt-waterpoint-pr44336055"
-STATE_DIR = Path("browser_state")
-USER_DATA_DIR = STATE_DIR / "chrome_profile"
+USER_DATA_DIR = BATDONGSAN_USER_DATA_DIR
+MANUAL_ACTION_TIMEOUT_SECONDS = float(os.getenv("MANUAL_ACTION_TIMEOUT_SECONDS", "900"))
 
 PHONE_BUTTON_SELECTORS = [
     "[lead-tracking-id='lead-phone-ldp']",
@@ -43,6 +46,7 @@ LISTING_READY_SELECTORS = [
     "[lead-tracking-id='lead-phone-ldp']",
     ".js__phone",
 ]
+MOBILE_PHONE_PATTERN = r"0(?:3[2-9]|5[25689]|7[06789]|8[1-9]|9[0-46-9])\d{7}"
 
 
 def log(message: str) -> None:
@@ -67,7 +71,7 @@ def normalize_phone(phone: str | None) -> str | None:
     elif phone.startswith("84") and len(phone) == 11:
         phone = "0" + phone[2:]
 
-    return phone if re.fullmatch(r"0\d{9}", phone) else None
+    return phone if re.fullmatch(MOBILE_PHONE_PATTERN, phone) else None
 
 
 def extract_phone_from_text(text: str | None) -> str | None:
@@ -94,13 +98,14 @@ def extract_all_phones_from_text(text: str | None) -> list[str]:
     return phones
 
 
-def extract_phone_from_page(driver: webdriver.Chrome) -> str | None:
+def extract_phone_from_page(driver: webdriver.Chrome, *, include_page_source: bool = False) -> str | None:
     candidates: list[str] = []
     candidates.extend(extract_all_phones_from_text(get_body_text(driver)))
-    try:
-        candidates.extend(extract_all_phones_from_text(driver.page_source))
-    except WebDriverException:
-        pass
+    if include_page_source:
+        try:
+            candidates.extend(extract_all_phones_from_text(driver.page_source))
+        except WebDriverException:
+            pass
 
     if not candidates:
         return None
@@ -109,27 +114,7 @@ def extract_phone_from_page(driver: webdriver.Chrome) -> str | None:
 
 
 def build_driver() -> webdriver.Chrome:
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    options = Options()
-    options.add_argument(f"--user-data-dir={USER_DATA_DIR.resolve()}")
-    options.add_argument("--profile-directory=Default")
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-
-    driver = webdriver.Chrome(options=options)
-    driver.execute_cdp_cmd(
-        "Page.addScriptToEvaluateOnNewDocument",
-        {
-            "source": """
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """
-        },
-    )
-    return driver
+    return build_browser_driver(USER_DATA_DIR)
 
 
 def get_text(driver: webdriver.Chrome, selectors: list[str]) -> str | None:
@@ -202,8 +187,13 @@ def wait_for_listing_ready(driver: webdriver.Chrome) -> None:
         time.sleep(1.5)
 
     log("Trang dang o man hinh security verification.")
-    log("Hay hoan tat xac minh trong cua so Chrome, sau do nhan Enter de tiep tuc crawl.")
-    input()
+    log("Hay hoan tat xac minh trong browser/noVNC, sau do bam nut tiep tuc tren Web UI.")
+    wait_for_user_action(
+        source="batdongsan.com",
+        mode="verification",
+        message="Batdongsan dang cho ban hoan tat security verification trong browser/noVNC.",
+        timeout_seconds=MANUAL_ACTION_TIMEOUT_SECONDS,
+    )
 
     deadline = time.time() + 30
     while time.time() < deadline:
@@ -385,6 +375,13 @@ def extract_phone_from_element(element) -> str | None:
     return None
 
 
+def text_looks_like_masked_phone(text: str | None) -> bool:
+    normalized = clean_text(text)
+    if not normalized:
+        return False
+    return "*" in normalized or "hien so" in normalized.lower()
+
+
 def wait_for_phone_state(element) -> None:
     for _ in range(10):
         phone = extract_phone_from_element(element)
@@ -434,19 +431,20 @@ def extract_phone_from_ancestors(element) -> str | None:
 
 def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
     log("Dang tim nut hien so.")
-    phone = extract_phone_from_page(driver)
-    if phone:
-        log("Da lay duoc so dien thoai tu noi dung trang truoc khi click.")
-        return phone
-
     elements = visible_elements(driver, PHONE_BUTTON_SELECTORS, max_count=5)
     if not elements:
-        log("Khong tim thay nut hien so.")
+        log("Khong tim thay nut hien so. Thu fallback tu noi dung dang hien tren trang.")
         return extract_phone_from_page(driver)
 
     for idx, element in enumerate(elements, start=1):
+        element_text = None
+        try:
+            element_text = clean_text(element.text)
+        except WebDriverException:
+            pass
+
         phone = extract_phone_from_element(element)
-        if phone:
+        if phone and not text_looks_like_masked_phone(element_text):
             log("Da lay duoc so dien thoai truoc khi click.")
             return phone
 
@@ -479,7 +477,7 @@ def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
             log("Da lay duoc so dien thoai tu noi dung trang sau khi click.")
             return phone
 
-    log("Khong lay duoc so tren button, thu fallback doc toan trang.")
+    log("Khong lay duoc so tren button, thu fallback doc toan trang dang hien.")
     return extract_phone_from_page(driver)
 
 
@@ -492,7 +490,7 @@ def ensure_authenticated_listing_page(driver: webdriver.Chrome, url: str) -> Non
     if not is_logged_in(driver):
         raise RuntimeError(
             "Chrome profile hien tai chua dang nhap Batdongsan. "
-            "Hay chay `uv run -m core.login_batdongsan` bang cung browser profile roi thu lai."
+            "Hay mo browser session login tren Web UI, dang nhap xong roi thu lai."
         )
 
 

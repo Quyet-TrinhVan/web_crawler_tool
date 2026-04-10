@@ -6,40 +6,56 @@
   <title>Web Crawler UI</title>
   <style>
     :root {
-      --bg: #f6f8fb;
+      --bg: #f3f5f9;
       --card: #ffffff;
-      --text: #1f2a37;
-      --muted: #5b6675;
+      --text: #17202f;
+      --muted: #5c6777;
       --primary: #0b66ff;
-      --border: #d8e0ea;
+      --border: #d6deeb;
       --danger: #c81e1e;
       --ok: #0f7a35;
+      --warn: #b76500;
+      --panel: #eef4ff;
+      --dark: #0f172a;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: Segoe UI, Tahoma, sans-serif;
       color: var(--text);
-      background: radial-gradient(circle at top right, #e7efff 0%, var(--bg) 45%);
+      background: radial-gradient(circle at top right, #dde9ff 0%, var(--bg) 42%);
       min-height: 100vh;
-      display: grid;
-      place-items: center;
       padding: 20px;
+    }
+    .layout {
+      width: 100%;
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 18px;
+      align-items: start;
     }
     .card {
-      width: 100%;
-      max-width: 760px;
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 20px;
-      box-shadow: 0 10px 28px rgba(16, 24, 40, 0.08);
+      border-radius: 16px;
+      box-shadow: 0 12px 28px rgba(16, 24, 40, 0.08);
+      overflow: hidden;
     }
-    h1 {
+    .card-body {
+      padding: 18px;
+    }
+    h1, h2 {
       margin: 0 0 8px;
-      font-size: 24px;
     }
-    p { margin: 0 0 18px; color: var(--muted); }
+    h1 { font-size: 24px; }
+    h2 { font-size: 18px; }
+    p {
+      margin: 0 0 16px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
     .grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -62,7 +78,7 @@
     input:focus, select:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(11, 102, 255, 0.15);
+      box-shadow: 0 0 0 3px rgba(11, 102, 255, 0.14);
     }
     button {
       background: var(--primary);
@@ -71,21 +87,115 @@
       font-weight: 600;
       cursor: pointer;
     }
-    button:disabled { opacity: 0.7; cursor: not-allowed; }
+    button:disabled {
+      opacity: 0.68;
+      cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: #fff;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-danger {
+      background: #fff4f4;
+      color: var(--danger);
+      border: 1px solid #efc7c7;
+    }
     .result {
       margin-top: 14px;
       padding: 12px;
       border-radius: 10px;
       border: 1px solid var(--border);
       background: #f9fbff;
-      min-height: 44px;
+      min-height: 48px;
       white-space: pre-wrap;
+    }
+    .result-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .result-actions[hidden] {
+      display: none;
+    }
+    .link-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--primary);
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .link-button:hover {
+      text-decoration: underline;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--danger); }
+    .warn { color: var(--warn); }
+    .browser-meta {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .browser-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .browser-actions .full {
+      grid-column: 1 / -1;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      background: #eef2ff;
+      color: #274690;
+    }
+    .status-pill.ready { background: #e7f8ee; color: var(--ok); }
+    .status-pill.failed { background: #fff0f0; color: var(--danger); }
+    .status-pill.waiting_for_verification,
+    .status-pill.needs_user_action { background: #fff6e8; color: var(--warn); }
+    .browser-link {
+      display: inline-block;
+      margin-top: 10px;
+      color: var(--primary);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .browser-link:hover { text-decoration: underline; }
+    .browser-frame-wrap {
+      background: #dbe7ff;
+      padding: 10px;
+      border-top: 1px solid var(--border);
+    }
+    .browser-frame {
+      width: 100%;
+      height: 680px;
+      border: 0;
+      border-radius: 12px;
+      background: #071122;
     }
     .stream-box {
       margin-top: 14px;
       border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #0f172a;
+      border-radius: 12px;
+      background: var(--dark);
       color: #dbeafe;
       overflow: hidden;
     }
@@ -99,97 +209,108 @@
     .stream-log {
       margin: 0;
       padding: 12px;
-      min-height: 180px;
-      max-height: 360px;
+      min-height: 220px;
+      max-height: 420px;
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
       font-size: 13px;
       line-height: 1.55;
     }
-    .login-box {
-      margin: 0 0 14px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #f9fbff;
-      padding: 12px;
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+      .browser-frame {
+        height: 520px;
+      }
     }
-    .login-actions {
-      display: grid;
-      gap: 10px;
-      grid-template-columns: 1fr 1fr;
-      margin-top: 10px;
-    }
-    .btn-secondary {
-      background: #ffffff;
-      color: var(--text);
-      border: 1px solid var(--border);
-    }
-    .ok { color: var(--ok); }
-    .err { color: var(--danger); }
     @media (max-width: 640px) {
-      .grid { grid-template-columns: 1fr; }
-      .login-actions { grid-template-columns: 1fr; }
+      .grid,
+      .browser-actions {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Web Crawler UI</h1>
-    <p>Nhap tham so va bam Chay crawl de thay cho lenh CLI.</p>
+  <div class="layout">
+    <div class="card">
+      <div class="card-body">
+        <h1>Web Crawler UI</h1>
+        <p>Chay crawler trong container va thao tac browser qua noVNC khi can login hoac vuot security verification.</p>
 
-    <div class="login-box">
-      <strong>Batdongsan login session</strong>
-      <p id="login-hint" style="margin-top: 8px;">Neu chua login profile Batdongsan, mo Chrome login truoc khi crawl.</p>
-      <div class="login-actions">
-        <button id="login-start-btn" class="btn-secondary" type="button">Mo Chrome de login</button>
-        <button id="login-complete-btn" class="btn-secondary" type="button">Da login xong</button>
+        <div class="browser-meta">
+          <div id="browser-status" class="status-pill">idle</div>
+          <p id="browser-message" style="margin-top: 10px;">Dang tai trang thai browser session...</p>
+          <div id="browser-profile" style="font-size: 13px; color: var(--muted);"></div>
+          <a id="browser-link" class="browser-link" href="#" target="_blank" rel="noopener noreferrer">Mo noVNC trong tab moi</a>
+
+          <div class="browser-actions">
+            <button id="login-start-btn" class="btn-secondary" type="button">Mo browser login</button>
+            <button id="login-complete-btn" class="btn-secondary" type="button">Toi da hoan tat, tiep tuc</button>
+            <button id="login-stop-btn" class="btn-danger full" type="button">Dung browser session</button>
+          </div>
+        </div>
+
+        <form id="crawl-form" class="grid">
+          <div>
+            <label for="source">Source</label>
+            <select id="source" name="source" required>
+              <option value="batdongsan.com">batdongsan.com</option>
+              <option value="nhatot.com">nhatot.com</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="mode">Mode</label>
+            <select id="mode" name="mode">
+              <option value="page">Theo page</option>
+              <option value="today">Today (chi batdongsan)</option>
+            </select>
+          </div>
+
+          <div class="full" id="page-url-wrap">
+            <label for="page_url">Page URL</label>
+            <input id="page_url" name="page_url" placeholder="https://..." />
+          </div>
+
+          <div id="page-number-wrap">
+            <label for="page_number">Page number</label>
+            <input id="page_number" name="page_number" type="number" min="1" value="1" />
+          </div>
+
+          <div>
+            <label for="output">Output CSV</label>
+            <input id="output" name="output" value="output.csv" required />
+          </div>
+
+          <div class="full">
+            <button id="submit-btn" type="submit">Chay crawl</button>
+          </div>
+        </form>
+
+        <div class="stream-box">
+          <div class="stream-header">Streaming crawl log</div>
+          <pre id="stream-log" class="stream-log">Chua co log.</pre>
+        </div>
+
+        <div id="result" class="result">San sang.</div>
+        <div id="result-actions" class="result-actions" hidden>
+          <a id="download-link" class="link-button" href="#" download>Tai CSV</a>
+        </div>
       </div>
     </div>
 
-    <form id="crawl-form" class="grid">
-      <div>
-        <label for="source">Source</label>
-        <select id="source" name="source" required>
-          <option value="batdongsan.com">batdongsan.com</option>
-          <option value="nhatot.com">nhatot.com</option>
-        </select>
+    <div class="card">
+      <div class="card-body" style="padding-bottom: 12px;">
+        <h2>Browser noVNC</h2>
+        <p>Browser Selenium chay trong container. Khi UI bao can thao tac tay, ban login hoac vuot verification ngay trong khung nay.</p>
       </div>
-
-      <div>
-        <label for="mode">Mode</label>
-        <select id="mode" name="mode">
-          <option value="page">Theo page</option>
-          <option value="today">Today (chi batdongsan)</option>
-        </select>
+      <div class="browser-frame-wrap">
+        <iframe id="browser-frame" class="browser-frame" title="Browser noVNC"></iframe>
       </div>
-
-      <div class="full" id="page-url-wrap">
-        <label for="page_url">Page URL</label>
-        <input id="page_url" name="page_url" placeholder="https://..." />
-      </div>
-
-      <div id="page-number-wrap">
-        <label for="page_number">Page number</label>
-        <input id="page_number" name="page_number" type="number" min="1" value="1" />
-      </div>
-
-      <div>
-        <label for="output">Output CSV</label>
-        <input id="output" name="output" value="output.csv" required />
-      </div>
-
-      <div class="full">
-        <button id="submit-btn" type="submit">Chay crawl</button>
-      </div>
-    </form>
-
-    <div class="stream-box">
-      <div class="stream-header">Streaming crawl log</div>
-      <pre id="stream-log" class="stream-log">Chua co log.</pre>
     </div>
-
-    <div id="result" class="result">San sang.</div>
   </div>
 
   <script>
@@ -206,13 +327,34 @@
     const streamLog = document.getElementById("stream-log");
     const loginStartBtn = document.getElementById("login-start-btn");
     const loginCompleteBtn = document.getElementById("login-complete-btn");
-    const loginHint = document.getElementById("login-hint");
+    const loginStopBtn = document.getElementById("login-stop-btn");
+    const browserStatus = document.getElementById("browser-status");
+    const browserMessage = document.getElementById("browser-message");
+    const browserProfile = document.getElementById("browser-profile");
+    const browserLink = document.getElementById("browser-link");
+    const browserFrame = document.getElementById("browser-frame");
+    const resultActions = document.getElementById("result-actions");
+    const downloadLink = document.getElementById("download-link");
     let activeEventSource = null;
+    let browserSession = null;
 
-    function setResult(message, ok) {
+    function setResult(message, ok, warning = false) {
       result.textContent = message;
-      result.classList.remove("ok", "err");
-      result.classList.add(ok ? "ok" : "err");
+      result.classList.remove("ok", "err", "warn");
+      result.classList.add(warning ? "warn" : (ok ? "ok" : "err"));
+    }
+
+    function hideResultActions() {
+      resultActions.hidden = true;
+      downloadLink.href = "#";
+      downloadLink.removeAttribute("download");
+    }
+
+    function setDownloadLink(outputPath) {
+      const url = `/api/files/download?path=${encodeURIComponent(outputPath)}`;
+      downloadLink.href = url;
+      downloadLink.setAttribute("download", outputPath.split(/[\\/]/).pop() || "output.csv");
+      resultActions.hidden = false;
     }
 
     function setStreamLog(message) {
@@ -237,17 +379,54 @@
         source.value = "batdongsan.com";
       }
 
-      const isBatdongsan = source.value === "batdongsan.com";
-      loginStartBtn.disabled = !isBatdongsan;
-      loginCompleteBtn.disabled = !isBatdongsan;
-      loginHint.textContent = isBatdongsan
-        ? "Neu chua login profile Batdongsan, mo Chrome login truoc khi crawl."
-        : "Login session nay chi ap dung cho batdongsan.com.";
+      updateBrowserControls();
     }
 
-    mode.addEventListener("change", refreshModeUi);
-    source.addEventListener("change", refreshModeUi);
-    refreshModeUi();
+    function updateBrowserControls() {
+      const session = browserSession || { status: "idle", login_driver_open: false };
+      const isBatdongsan = source.value === "batdongsan.com";
+      const needsManualAction = ["needs_user_action", "waiting_for_verification"].includes(session.status);
+      const canStop = session.login_driver_open || needsManualAction || ["ready", "failed"].includes(session.status);
+
+      loginStartBtn.disabled = !isBatdongsan || needsManualAction || session.login_driver_open;
+      loginCompleteBtn.disabled = !needsManualAction;
+      loginStopBtn.disabled = !canStop;
+    }
+
+    function renderBrowserSession(session) {
+      browserSession = session;
+      browserStatus.textContent = session.status;
+      browserStatus.className = `status-pill ${session.status}`;
+      browserMessage.textContent = session.message || "Khong co thong diep.";
+      browserProfile.textContent = session.profile_path ? `Profile: ${session.profile_path}` : "Profile: chua su dung.";
+
+      if (session.vnc_url) {
+        browserLink.href = session.vnc_url;
+        browserLink.style.display = "inline-block";
+        if (browserFrame.src !== session.vnc_url) {
+          browserFrame.src = session.vnc_url;
+        }
+      } else {
+        browserLink.style.display = "none";
+      }
+
+      updateBrowserControls();
+    }
+
+    async function refreshBrowserSession(silent = false) {
+      try {
+        const response = await fetch("/api/browser/session");
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Khong tai duoc trang thai browser session");
+        }
+        renderBrowserSession(data);
+      } catch (error) {
+        if (!silent) {
+          setResult(`That bai: ${error.message}`, false);
+        }
+      }
+    }
 
     async function startCrawlStream(payload) {
       if (activeEventSource) {
@@ -267,16 +446,19 @@
       }
 
       setStreamLog("Da khoi tao job crawl...\nDang nhan log streaming.");
+      await refreshBrowserSession(true);
 
       activeEventSource = new EventSource(`/api/crawl/events/${data.job_id}`);
 
-      activeEventSource.addEventListener("log", (event) => {
+      activeEventSource.addEventListener("log", async (event) => {
         appendStreamLog(event.data);
+        await refreshBrowserSession(true);
       });
 
-      activeEventSource.addEventListener("done", (event) => {
+      activeEventSource.addEventListener("done", async (event) => {
         try {
           const resultData = JSON.parse(event.data);
+          setDownloadLink(resultData.output);
           setResult(
             `Thanh cong\nSource: ${resultData.source}\nSo tin: ${resultData.count}\nCSV: ${resultData.output}`,
             true,
@@ -285,11 +467,14 @@
         } catch (error) {
           setResult(`Thanh cong nhung khong doc duoc ket qua: ${error.message}`, false);
         }
-        activeEventSource.close();
-        activeEventSource = null;
+        if (activeEventSource) {
+          activeEventSource.close();
+          activeEventSource = null;
+        }
+        await refreshBrowserSession(true);
       });
 
-      activeEventSource.addEventListener("error", (event) => {
+      activeEventSource.addEventListener("error", async (event) => {
         if (activeEventSource) {
           activeEventSource.close();
           activeEventSource = null;
@@ -298,43 +483,65 @@
           setResult(`That bai: ${event.data}`, false);
           appendStreamLog(`[error] ${event.data}`);
         } else {
-          setResult("That bai: Mat ket noi streaming.", false);
           appendStreamLog("[error] Mat ket noi streaming.");
         }
+        await refreshBrowserSession(true);
       });
     }
 
-    async function callLoginApi(path, loadingText) {
+    async function callBrowserApi(path, loadingText, body = null) {
       loginStartBtn.disabled = true;
       loginCompleteBtn.disabled = true;
-      setResult(loadingText, true);
+      loginStopBtn.disabled = true;
+      hideResultActions();
+      setResult(loadingText, true, true);
 
       try {
-        const response = await fetch(path, { method: "POST" });
+        const response = await fetch(path, {
+          method: "POST",
+          headers: body ? { "Content-Type": "application/json" } : {},
+          body: body ? JSON.stringify(body) : null,
+        });
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data.detail || "Loi khong xac dinh");
         }
-        setResult(`${data.message}\nProfile: ${data.profile}`, true);
+        renderBrowserSession(data);
+        setResult(data.message || `Browser session: ${data.status}`, true);
       } catch (error) {
         setResult(`That bai: ${error.message}`, false);
       } finally {
-        refreshModeUi();
+        updateBrowserControls();
       }
     }
 
+    mode.addEventListener("change", refreshModeUi);
+    source.addEventListener("change", refreshModeUi);
+
     loginStartBtn.addEventListener("click", async () => {
-      await callLoginApi("/api/login/batdongsan/start", "Dang mo Chrome login...");
+      await callBrowserApi(
+        "/api/browser/session/start",
+        "Dang mo browser login trong container...",
+        { source: "batdongsan.com", mode: "login" },
+      );
     });
 
     loginCompleteBtn.addEventListener("click", async () => {
-      await callLoginApi("/api/login/batdongsan/complete", "Dang dong Chrome va luu session...");
+      await callBrowserApi(
+        "/api/browser/session/complete",
+        "Dang danh dau da hoan tat login/xac minh...",
+      );
+    });
+
+    loginStopBtn.addEventListener("click", async () => {
+      await callBrowserApi("/api/browser/session/stop", "Dang dung browser session...");
     });
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       submitBtn.disabled = true;
-      setResult("Dang chay crawl, vui long doi...", true);
+      hideResultActions();
+      setResult("Dang chay crawl, vui long doi...", true, true);
       setStreamLog("Dang chuan bi crawl...");
 
       const payload = {
@@ -357,6 +564,12 @@
         submitBtn.disabled = false;
       }
     });
+
+    refreshModeUi();
+    refreshBrowserSession();
+    window.setInterval(() => {
+      refreshBrowserSession(true);
+    }, 3000);
   </script>
 </body>
 </html>

@@ -6,23 +6,32 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from threading import Event, Lock
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from core.browser_session import (
+    fail_session,
+    get_session_state,
+    mark_session_ready,
+    reset_session,
+    set_session_state,
+)
 from core.crawl_batdongsan_list import (
     crawl_categories_for_today as crawl_batdongsan_categories_for_today,
     crawl_listing_page as crawl_batdongsan_listing_page,
 )
 from core.crawl_nhatot_list import crawl_listing_page as crawl_nhatot_listing_page
-from core.login_batdongsan import HOME_URL, USER_DATA_DIR, build_driver as build_batdongsan_login_driver
+from core.login_batdongsan import HOME_URL, build_driver as build_batdongsan_login_driver
 from main import normalize_rows, save_rows
 
 
 app = FastAPI(title="Web Crawler UI")
+WORKSPACE_ROOT = Path.cwd().resolve()
 LOGIN_DRIVER = None
 LOGIN_LOCK = Lock()
 JOB_LOCK = Lock()
+CRAWL_RUN_LOCK = Lock()
 CRAWL_JOBS: dict[str, dict] = {}
 
 
@@ -36,6 +45,11 @@ class CrawlRequest(BaseModel):
 
 class CrawlStartResponse(BaseModel):
     job_id: str
+
+
+class BrowserSessionStartRequest(BaseModel):
+    source: str = "batdongsan.com"
+    mode: str = "login"
 
 
 class QueueTextWriter:
@@ -89,10 +103,131 @@ def _remove_job(job_id: str) -> None:
         CRAWL_JOBS.pop(job_id, None)
 
 
+def _request_origin(request: Request) -> tuple[str, str]:
+    return request.url.hostname or "localhost", request.url.scheme or "http"
+
+
+def _resolve_output_path(path_value: str) -> Path:
+    candidate = Path(path_value)
+    if not candidate.is_absolute():
+        candidate = WORKSPACE_ROOT / candidate
+    resolved = candidate.resolve()
+
+    try:
+        resolved.relative_to(WORKSPACE_ROOT)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Chi duoc tai file nam trong thu muc project.") from exc
+
+    return resolved
+
+
+def _browser_session_response(request: Request) -> dict:
+    host, scheme = _request_origin(request)
+    state = get_session_state(host=host, scheme=scheme)
+    with LOGIN_LOCK:
+        login_driver_open = LOGIN_DRIVER is not None
+    state["login_driver_open"] = login_driver_open
+    return state
+
+
+def _validate_browser_start_request(payload: BrowserSessionStartRequest) -> None:
+    if payload.source != "batdongsan.com":
+        raise HTTPException(status_code=400, detail="Hien tai chi ho tro mo browser login cho batdongsan.com")
+    if payload.mode != "login":
+        raise HTTPException(status_code=400, detail="mode khong hop le")
+
+
+def _start_browser_session(payload: BrowserSessionStartRequest, request: Request) -> dict:
+    global LOGIN_DRIVER
+
+    _validate_browser_start_request(payload)
+    host, scheme = _request_origin(request)
+
+    try:
+        set_session_state(
+            source=payload.source,
+            mode=payload.mode,
+            status="needs_user_action",
+            message="Browser da mo trong container. Hay dang nhap/xac minh trong noVNC, roi bam nut tiep tuc.",
+            host=host,
+            scheme=scheme,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    with LOGIN_LOCK:
+        if LOGIN_DRIVER is not None:
+            fail_session("Dang co browser login session khac dang mo.")
+            raise HTTPException(status_code=409, detail="Dang co mot browser login session dang mo.")
+
+        try:
+            LOGIN_DRIVER = build_batdongsan_login_driver()
+            LOGIN_DRIVER.get(HOME_URL)
+        except Exception as exc:
+            LOGIN_DRIVER = None
+            fail_session(f"Khong mo duoc browser login: {exc}")
+            raise HTTPException(status_code=500, detail=f"Khong mo duoc browser login: {exc}") from exc
+
+    return _browser_session_response(request)
+
+
+def _complete_browser_session(request: Request) -> dict:
+    global LOGIN_DRIVER
+
+    with LOGIN_LOCK:
+        if LOGIN_DRIVER is not None:
+            try:
+                LOGIN_DRIVER.quit()
+            except Exception as exc:
+                LOGIN_DRIVER = None
+                fail_session(f"Khong dong duoc browser login: {exc}")
+                raise HTTPException(status_code=500, detail=f"Khong dong duoc browser login: {exc}") from exc
+            LOGIN_DRIVER = None
+
+    try:
+        mark_session_ready("Nguoi dung da hoan tat login/xac minh. Crawler co the tiep tuc.")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _browser_session_response(request)
+
+
+def _stop_browser_session(request: Request) -> dict:
+    global LOGIN_DRIVER
+
+    stop_message = "Browser session da dung theo yeu cau nguoi dung."
+
+    with LOGIN_LOCK:
+        if LOGIN_DRIVER is not None:
+            try:
+                LOGIN_DRIVER.quit()
+            except Exception as exc:
+                LOGIN_DRIVER = None
+                fail_session(f"Khong dong duoc browser login: {exc}")
+                raise HTTPException(status_code=500, detail=f"Khong dong duoc browser login: {exc}") from exc
+            LOGIN_DRIVER = None
+
+    state = _browser_session_response(request)
+    if state["status"] in {"needs_user_action", "waiting_for_verification"}:
+        fail_session(stop_message)
+        return _browser_session_response(request)
+
+    reset_session(stop_message)
+    return _browser_session_response(request)
+
+
 def _validate_request(payload: CrawlRequest) -> None:
     valid_sources = {"batdongsan.com", "nhatot.com"}
     if payload.source not in valid_sources:
         raise HTTPException(status_code=400, detail="source khong hop le")
+
+    if payload.source == "batdongsan.com":
+        with LOGIN_LOCK:
+            if LOGIN_DRIVER is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Dang co browser login Batdongsan dang mo. Hay bam nut tiep tuc hoac dung session truoc khi crawl.",
+                )
 
     if payload.date == "today":
         if payload.source != "batdongsan.com":
@@ -138,102 +273,115 @@ def _execute_crawl(payload: CrawlRequest) -> dict:
     }
 
 
+def _acquire_crawl_slot() -> None:
+    if not CRAWL_RUN_LOCK.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Dang co crawl job khac dang chay.")
+
+
+def _release_crawl_slot() -> None:
+    if CRAWL_RUN_LOCK.locked():
+        CRAWL_RUN_LOCK.release()
+
+
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(Path("web_ui.html"))
 
 
+@app.get("/api/files/download")
+def download_output_file(path: str) -> FileResponse:
+    resolved = _resolve_output_path(path)
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Khong tim thay file output.")
+
+    return FileResponse(
+        resolved,
+        media_type="text/csv",
+        filename=resolved.name,
+    )
+
+
+@app.get("/api/browser/session")
+def get_browser_session(request: Request) -> dict:
+    return _browser_session_response(request)
+
+
+@app.post("/api/browser/session/start")
+def start_browser_session(payload: BrowserSessionStartRequest, request: Request) -> dict:
+    return _start_browser_session(payload, request)
+
+
+@app.post("/api/browser/session/complete")
+def complete_browser_session(request: Request) -> dict:
+    return _complete_browser_session(request)
+
+
+@app.post("/api/browser/session/stop")
+def stop_browser_session(request: Request) -> dict:
+    return _stop_browser_session(request)
+
+
 @app.post("/api/login/batdongsan/start")
-def start_batdongsan_login() -> dict:
-    global LOGIN_DRIVER
-
-    with LOGIN_LOCK:
-        if LOGIN_DRIVER is not None:
-            raise HTTPException(
-                status_code=409,
-                detail="Dang co mot phien login Batdongsan dang mo. Hay bam 'Da login xong' truoc.",
-            )
-
-        try:
-            LOGIN_DRIVER = build_batdongsan_login_driver()
-            LOGIN_DRIVER.get(HOME_URL)
-        except Exception as exc:
-            LOGIN_DRIVER = None
-            raise HTTPException(status_code=500, detail=f"Khong mo duoc Chrome login: {exc}") from exc
-
-    return {
-        "ok": True,
-        "message": "Chrome da mo voi profile Batdongsan. Hay dang nhap/xac minh trong cua so Chrome.",
-        "profile": str(USER_DATA_DIR),
-    }
+def start_batdongsan_login(request: Request) -> dict:
+    return _start_browser_session(BrowserSessionStartRequest(), request)
 
 
 @app.post("/api/login/batdongsan/complete")
-def complete_batdongsan_login() -> dict:
-    global LOGIN_DRIVER
-
-    with LOGIN_LOCK:
-        if LOGIN_DRIVER is None:
-            raise HTTPException(status_code=400, detail="Khong co phien login nao dang mo.")
-
-        try:
-            LOGIN_DRIVER.quit()
-        except Exception as exc:
-            LOGIN_DRIVER = None
-            raise HTTPException(status_code=500, detail=f"Khong dong duoc Chrome login: {exc}") from exc
-
-        LOGIN_DRIVER = None
-
-    return {
-        "ok": True,
-        "message": "Da dong Chrome login va luu session Batdongsan.",
-        "profile": str(USER_DATA_DIR),
-    }
+def complete_batdongsan_login(request: Request) -> dict:
+    return _complete_browser_session(request)
 
 
 @app.post("/api/crawl")
 def run_crawl(payload: CrawlRequest) -> dict:
+    _acquire_crawl_slot()
     try:
         return _execute_crawl(payload)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        _release_crawl_slot()
 
 
 @app.post("/api/crawl/start", response_model=CrawlStartResponse)
 def start_crawl(payload: CrawlRequest) -> dict:
     _validate_request(payload)
+    _acquire_crawl_slot()
+    try:
+        job_id = uuid.uuid4().hex
+        output_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        done_event = Event()
+        job = {
+            "queue": output_queue,
+            "done": done_event,
+            "result": None,
+            "error": None,
+        }
+        _store_job(job_id, job)
 
-    job_id = uuid.uuid4().hex
-    output_queue: queue.Queue[tuple[str, str]] = queue.Queue()
-    done_event = Event()
-    job = {
-        "queue": output_queue,
-        "done": done_event,
-        "result": None,
-        "error": None,
-    }
-    _store_job(job_id, job)
+        def worker() -> None:
+            writer = QueueTextWriter(output_queue)
+            try:
+                output_queue.put(("log", f"Khoi tao crawl job {job_id}"))
+                with redirect_stdout(writer), redirect_stderr(writer):
+                    result = _execute_crawl(payload)
+                job["result"] = result
+                output_queue.put(("done", json.dumps(result, ensure_ascii=False)))
+            except Exception as exc:
+                message = str(exc)
+                job["error"] = message
+                output_queue.put(("error", message))
+            finally:
+                writer.flush()
+                done_event.set()
+                _release_crawl_slot()
 
-    def worker() -> None:
-        writer = QueueTextWriter(output_queue)
-        try:
-            output_queue.put(("log", f"Khoi tao crawl job {job_id}"))
-            with redirect_stdout(writer), redirect_stderr(writer):
-                result = _execute_crawl(payload)
-            job["result"] = result
-            output_queue.put(("done", json.dumps(result, ensure_ascii=False)))
-        except Exception as exc:
-            message = str(exc)
-            job["error"] = message
-            output_queue.put(("error", message))
-        finally:
-            writer.flush()
-            done_event.set()
-
-    threading.Thread(target=worker, daemon=True).start()
-    return {"job_id": job_id}
+        threading.Thread(target=worker, daemon=True).start()
+        return {"job_id": job_id}
+    except Exception:
+        _release_crawl_slot()
+        raise
 
 
 @app.get("/api/crawl/events/{job_id}")

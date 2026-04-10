@@ -11,6 +11,7 @@ Project hien tai ho tro:
 - crawl 1 trang danh sach va tu lay link detail trong trang do
 - crawl Batdongsan theo che do `today` tren nhieu category
 - xuat CSV encoding `utf-8-sig` de mo bang Excel
+- chay Web UI de login/crawl trong browser noVNC va tai CSV truc tiep
 
 ## Yeu cau
 
@@ -32,6 +33,48 @@ Neu can tao lai lock file:
 uv lock
 uv sync
 ```
+
+## Chay bang Docker + noVNC
+
+Project da co san stack Docker de chay FastAPI + Selenium + Chromium trong cung mot container.
+
+Chay:
+
+```powershell
+docker compose up --build
+```
+
+Sau khi container len:
+
+- Web UI: `http://localhost:8000`
+- Browser noVNC: `http://localhost:6080/vnc.html?autoconnect=1&resize=remote`
+
+Flow Batdongsan moi:
+
+1. Mo Web UI
+2. Bam `Mo browser login`
+3. Dang nhap/xac minh trong khung noVNC
+4. Bam `Toi da hoan tat, tiep tuc`
+5. Bat dau crawl
+6. Khi job xong, bam `Tai CSV` de tai file output
+
+Thu muc `browser_state/` duoc mount vao container de giu Chrome profile qua cac lan restart.
+Docker se dung profile rieng trong `browser_state/docker/` de tranh conflict voi Chrome/Chromium chay local tren Windows.
+
+## Web UI
+
+Web UI hien tai ho tro:
+
+- mo browser login Batdongsan trong container
+- theo doi log crawl realtime
+- resume sau khi tu xu ly Cloudflare/security verification
+- tai file CSV output truc tiep tu UI sau khi crawl xong
+
+Luu y:
+
+- nut `Tai CSV` chi xuat hien sau khi job crawl thanh cong
+- file duoc tai tu duong dan `output` ma ban nhap tren form
+- chi cac file nam trong thu muc project moi duoc phep download qua API
 
 ## Cau truc chinh
 
@@ -103,14 +146,15 @@ Batdongsan can Chrome profile da dang nhap. De tao profile persistent:
 uv run -m core.login_batdongsan
 ```
 
-Flow:
+Flow local khong qua Docker:
 
 1. Chrome mo voi profile tai `browser_state/chrome_profile`
 2. Ban tu vuot qua Cloudflare, dang nhap, xac minh neu can
-3. Quay lai terminal va nhan `Enter`
+3. Quay lai terminal va nhan `Ctrl+C`
 4. Sau do chay crawler
 
 Profile nay se duoc tai su dung cho cac lan crawl Batdongsan sau.
+Neu chay bang Docker, session se duoc luu rieng trong `browser_state/docker/chrome_profile`.
 
 ## Chay tung script rieng
 
@@ -172,14 +216,16 @@ Ghi chu:
 
 Project dung persistent Chrome profile de giu session:
 
-- Batdongsan: `browser_state/chrome_profile`
-- NhaTot: `browser_state/nhatot_chrome_profile`
+- local Batdongsan: `browser_state/chrome_profile`
+- local NhaTot: `browser_state/nhatot_chrome_profile`
+- Docker Batdongsan: `browser_state/docker/chrome_profile`
+- Docker NhaTot: `browser_state/docker/nhatot_chrome_profile`
 
 Neu profile bi loi hoac dinh session cu, co the xoa thu muc profile tuong ung roi chay lai.
 
 ## Luu y
 
-- Site co the hien Cloudflare hoac security verification. Khi do script se doi ban xu ly trong cua so Chrome va nhan `Enter` de tiep tuc.
+- Site co the hien Cloudflare hoac security verification. Khi do Web UI se doi ban xu ly trong browser/noVNC va bam nut tiep tuc.
 - Selector HTML co the thay doi. Neu dang crawl binh thuong ma dot nhien loi, kha nang cao la layout trang da doi.
 - Batdongsan thuong can tai khoan da dang nhap de lay so dien thoai.
 - NhaTot khong can login trong code hien tai, nhung van co the gap security verification.
@@ -188,7 +234,12 @@ Neu profile bi loi hoac dinh session cu, co the xoa thu muc profile tuong ung ro
 
 CSV duoc ghi voi encoding `utf-8-sig`.
 
-Vi du doc nhanh 5 dong dau:
+Neu chay bang Web UI:
+
+- sau khi crawl xong, UI se hien ten file output
+- bam `Tai CSV` de download file ve may
+
+Neu chay bang CLI, co the doc nhanh 5 dong dau:
 
 ```powershell
 Get-Content .\batdongsan.csv | Select-Object -First 5
