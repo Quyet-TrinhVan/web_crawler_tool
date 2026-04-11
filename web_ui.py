@@ -1,3 +1,4 @@
+import csv
 import json
 import queue
 import threading
@@ -17,6 +18,7 @@ from core.browser_session import (
     reset_session,
     set_session_state,
 )
+from core.crawl_control import CrawlStoppedError, crawl_stop_context, raise_if_stop_requested
 from core.crawl_batdongsan_list import (
     crawl_categories_for_today as crawl_batdongsan_categories_for_today,
     crawl_listing_page as crawl_batdongsan_listing_page,
@@ -53,7 +55,7 @@ class BrowserSessionStartRequest(BaseModel):
 
 
 class QueueTextWriter:
-    def __init__(self, output_queue: queue.Queue[tuple[str, str]]):
+    def __init__(self, output_queue: queue.Queue[tuple[str, object]]):
         self.output_queue = output_queue
         self.buffer = ""
 
@@ -103,6 +105,12 @@ def _remove_job(job_id: str) -> None:
         CRAWL_JOBS.pop(job_id, None)
 
 
+def _schedule_job_cleanup(job_id: str, delay_seconds: float = 600) -> None:
+    timer = threading.Timer(delay_seconds, _remove_job, args=[job_id])
+    timer.daemon = True
+    timer.start()
+
+
 def _request_origin(request: Request) -> tuple[str, str]:
     return request.url.hostname or "localhost", request.url.scheme or "http"
 
@@ -119,6 +127,36 @@ def _resolve_output_path(path_value: str) -> Path:
         raise HTTPException(status_code=400, detail="Chi duoc tai file nam trong thu muc project.") from exc
 
     return resolved
+
+
+def _count_csv_records(path: Path) -> int:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        next(reader, None)
+        return sum(1 for row in reader if any(cell.strip() for cell in row))
+
+
+def _build_partial_output(path_value: str | None) -> dict | None:
+    if not path_value:
+        return None
+
+    try:
+        resolved = _resolve_output_path(path_value)
+    except HTTPException:
+        return None
+
+    if not resolved.is_file():
+        return None
+
+    try:
+        count = _count_csv_records(resolved)
+    except OSError:
+        return None
+
+    return {
+        "output": path_value,
+        "count": count,
+    }
 
 
 def _browser_session_response(request: Request) -> dict:
@@ -262,6 +300,7 @@ def _execute_crawl(payload: CrawlRequest) -> dict:
         }[payload.source]
         rows = crawler(page_url, page_number=page_number, output_path=output_path)
 
+    raise_if_stop_requested()
     normalized_rows = normalize_rows(rows, source=payload.source)
     save_rows(normalized_rows, output_path)
 
@@ -350,13 +389,17 @@ def start_crawl(payload: CrawlRequest) -> dict:
     _acquire_crawl_slot()
     try:
         job_id = uuid.uuid4().hex
-        output_queue: queue.Queue[tuple[str, str]] = queue.Queue()
+        output_queue: queue.Queue[tuple[str, object]] = queue.Queue()
         done_event = Event()
+        stop_event = Event()
         job = {
             "queue": output_queue,
             "done": done_event,
+            "stop": stop_event,
             "result": None,
             "error": None,
+            "output": payload.output,
+            "source": payload.source,
         }
         _store_job(job_id, job)
 
@@ -364,17 +407,36 @@ def start_crawl(payload: CrawlRequest) -> dict:
             writer = QueueTextWriter(output_queue)
             try:
                 output_queue.put(("log", f"Khoi tao crawl job {job_id}"))
-                with redirect_stdout(writer), redirect_stderr(writer):
+                with crawl_stop_context(stop_event.is_set), redirect_stdout(writer), redirect_stderr(writer):
                     result = _execute_crawl(payload)
                 job["result"] = result
-                output_queue.put(("done", json.dumps(result, ensure_ascii=False)))
+                output_queue.put(("done", result))
+            except CrawlStoppedError as exc:
+                partial = _build_partial_output(job.get("output"))
+                stopped_result = {
+                    "ok": True,
+                    "status": "stopped",
+                    "source": payload.source,
+                    "message": str(exc),
+                    "output": partial["output"] if partial else payload.output,
+                    "count": partial["count"] if partial else 0,
+                    "partial": partial,
+                }
+                job["result"] = stopped_result
+                output_queue.put(("stopped", stopped_result))
             except Exception as exc:
-                message = str(exc)
-                job["error"] = message
-                output_queue.put(("error", message))
+                error_payload = {
+                    "message": str(exc),
+                    "source": payload.source,
+                    "output": payload.output,
+                    "partial": _build_partial_output(job.get("output")),
+                }
+                job["error"] = error_payload
+                output_queue.put(("failed", error_payload))
             finally:
                 writer.flush()
                 done_event.set()
+                _schedule_job_cleanup(job_id)
                 _release_crawl_slot()
 
         threading.Thread(target=worker, daemon=True).start()
@@ -384,10 +446,34 @@ def start_crawl(payload: CrawlRequest) -> dict:
         raise
 
 
+@app.post("/api/crawl/stop/{job_id}")
+def stop_crawl(job_id: str) -> dict:
+    job = _get_job(job_id)
+    done_event: Event = job["done"]
+    stop_event: Event = job["stop"]
+    partial = _build_partial_output(job.get("output"))
+
+    if done_event.is_set():
+        return {
+            "ok": True,
+            "status": "done",
+            "message": "Crawl job da ket thuc.",
+            "partial": partial,
+        }
+
+    stop_event.set()
+    return {
+        "ok": True,
+        "status": "stopping",
+        "message": "Da gui yeu cau dung crawl. Job se dung sau buoc dang chay hien tai.",
+        "partial": partial,
+    }
+
+
 @app.get("/api/crawl/events/{job_id}")
 def crawl_events(job_id: str) -> StreamingResponse:
     job = _get_job(job_id)
-    output_queue: queue.Queue[tuple[str, str]] = job["queue"]
+    output_queue: queue.Queue[tuple[str, object]] = job["queue"]
     done_event: Event = job["done"]
 
     def event_stream():
@@ -401,10 +487,11 @@ def crawl_events(job_id: str) -> StreamingResponse:
                     continue
 
                 yield _sse_event(event_name, payload)
-                if event_name in {"done", "error"}:
+                if event_name in {"done", "stopped", "failed"}:
                     break
         finally:
-            _remove_job(job_id)
+            if done_event.is_set():
+                _remove_job(job_id)
 
     return StreamingResponse(
         event_stream(),

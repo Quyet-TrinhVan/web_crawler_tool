@@ -115,6 +115,11 @@
       gap: 10px;
       margin-top: 10px;
     }
+    .form-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
     .result-actions[hidden] {
       display: none;
     }
@@ -227,7 +232,8 @@
     }
     @media (max-width: 640px) {
       .grid,
-      .browser-actions {
+      .browser-actions,
+      .form-actions {
         grid-template-columns: 1fr;
       }
     }
@@ -285,8 +291,9 @@
             <input id="output" name="output" value="output.csv" required />
           </div>
 
-          <div class="full">
+          <div class="full form-actions">
             <button id="submit-btn" type="submit">Chay crawl</button>
+            <button id="stop-crawl-btn" class="btn-danger" type="button" disabled>Dung crawl</button>
           </div>
         </form>
 
@@ -323,6 +330,7 @@
     const pageNumber = document.getElementById("page_number");
     const output = document.getElementById("output");
     const submitBtn = document.getElementById("submit-btn");
+    const stopCrawlBtn = document.getElementById("stop-crawl-btn");
     const result = document.getElementById("result");
     const streamLog = document.getElementById("stream-log");
     const loginStartBtn = document.getElementById("login-start-btn");
@@ -337,6 +345,8 @@
     const downloadLink = document.getElementById("download-link");
     let activeEventSource = null;
     let browserSession = null;
+    let currentJobId = null;
+    let crawlStopRequested = false;
 
     function setResult(message, ok, warning = false) {
       result.textContent = message;
@@ -351,10 +361,38 @@
     }
 
     function setDownloadLink(outputPath) {
+      if (!outputPath) {
+        return;
+      }
       const url = `/api/files/download?path=${encodeURIComponent(outputPath)}`;
       downloadLink.href = url;
       downloadLink.setAttribute("download", outputPath.split(/[\\/]/).pop() || "output.csv");
       resultActions.hidden = false;
+    }
+
+    function setCrawlUiState(running) {
+      submitBtn.disabled = running;
+      stopCrawlBtn.disabled = !running || crawlStopRequested || !currentJobId;
+    }
+
+    function closeActiveEventSource() {
+      if (activeEventSource) {
+        activeEventSource.close();
+        activeEventSource = null;
+      }
+    }
+
+    function finishCrawlSession() {
+      closeActiveEventSource();
+      currentJobId = null;
+      crawlStopRequested = false;
+      setCrawlUiState(false);
+    }
+
+    function applyPartialResult(partial) {
+      if (partial && partial.output) {
+        setDownloadLink(partial.output);
+      }
     }
 
     function setStreamLog(message) {
@@ -429,10 +467,7 @@
     }
 
     async function startCrawlStream(payload) {
-      if (activeEventSource) {
-        activeEventSource.close();
-        activeEventSource = null;
-      }
+      closeActiveEventSource();
 
       const response = await fetch("/api/crawl/start", {
         method: "POST",
@@ -445,10 +480,13 @@
         throw new Error(data.detail || "Loi khong xac dinh");
       }
 
+      currentJobId = data.job_id;
+      crawlStopRequested = false;
+      setCrawlUiState(true);
       setStreamLog("Da khoi tao job crawl...\nDang nhan log streaming.");
       await refreshBrowserSession(true);
 
-      activeEventSource = new EventSource(`/api/crawl/events/${data.job_id}`);
+      activeEventSource = new EventSource(`/api/crawl/events/${currentJobId}`);
 
       activeEventSource.addEventListener("log", async (event) => {
         appendStreamLog(event.data);
@@ -467,26 +505,56 @@
         } catch (error) {
           setResult(`Thanh cong nhung khong doc duoc ket qua: ${error.message}`, false);
         }
-        if (activeEventSource) {
-          activeEventSource.close();
-          activeEventSource = null;
-        }
+        finishCrawlSession();
         await refreshBrowserSession(true);
       });
 
-      activeEventSource.addEventListener("error", async (event) => {
-        if (activeEventSource) {
-          activeEventSource.close();
-          activeEventSource = null;
+      activeEventSource.addEventListener("stopped", async (event) => {
+        try {
+          const stoppedData = JSON.parse(event.data);
+          applyPartialResult(stoppedData.partial);
+          setResult(
+            `Da dung crawl\nSource: ${stoppedData.source}\nSo tin da luu: ${stoppedData.count}\nCSV: ${stoppedData.output}`,
+            true,
+            true,
+          );
+          appendStreamLog(`[stopped] ${stoppedData.message}`);
+        } catch (error) {
+          setResult(`Da dung crawl nhung khong doc duoc ket qua: ${error.message}`, false, true);
         }
-        if (event && event.data) {
-          setResult(`That bai: ${event.data}`, false);
-          appendStreamLog(`[error] ${event.data}`);
-        } else {
-          appendStreamLog("[error] Mat ket noi streaming.");
-        }
+        finishCrawlSession();
         await refreshBrowserSession(true);
       });
+
+      activeEventSource.addEventListener("failed", async (event) => {
+        try {
+          const errorData = JSON.parse(event.data);
+          applyPartialResult(errorData.partial);
+          if (errorData.partial && errorData.partial.output) {
+            setResult(
+              `Crawl gap loi: ${errorData.message}\nDa luu tam ${errorData.partial.count} tin\nCSV: ${errorData.partial.output}`,
+              false,
+              true,
+            );
+          } else {
+            setResult(`That bai: ${errorData.message}`, false);
+          }
+          appendStreamLog(`[failed] ${errorData.message}`);
+        } catch (error) {
+          setResult(`That bai: ${error.message}`, false);
+        }
+        finishCrawlSession();
+        await refreshBrowserSession(true);
+      });
+
+      activeEventSource.onerror = async () => {
+        if (!currentJobId || !activeEventSource || activeEventSource.readyState !== EventSource.CLOSED) {
+          return;
+        }
+        appendStreamLog("[error] Mat ket noi streaming.");
+        finishCrawlSession();
+        await refreshBrowserSession(true);
+      };
     }
 
     async function callBrowserApi(path, loadingText, body = null) {
@@ -537,9 +605,35 @@
       await callBrowserApi("/api/browser/session/stop", "Dang dung browser session...");
     });
 
+    stopCrawlBtn.addEventListener("click", async () => {
+      if (!currentJobId || crawlStopRequested) {
+        return;
+      }
+
+      crawlStopRequested = true;
+      setCrawlUiState(true);
+      setResult("Dang gui yeu cau dung crawl...", true, true);
+
+      try {
+        const response = await fetch(`/api/crawl/stop/${currentJobId}`, { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Loi khong xac dinh");
+        }
+        applyPartialResult(data.partial);
+        appendStreamLog("[control] Da gui yeu cau dung crawl.");
+      } catch (error) {
+        crawlStopRequested = false;
+        setCrawlUiState(true);
+        setResult(`Khong gui duoc yeu cau dung crawl: ${error.message}`, false);
+      }
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      submitBtn.disabled = true;
+      currentJobId = null;
+      crawlStopRequested = false;
+      setCrawlUiState(true);
       hideResultActions();
       setResult("Dang chay crawl, vui long doi...", true, true);
       setStreamLog("Dang chuan bi crawl...");
@@ -559,13 +653,13 @@
       try {
         await startCrawlStream(payload);
       } catch (error) {
+        finishCrawlSession();
         setResult(`That bai: ${error.message}`, false);
-      } finally {
-        submitBtn.disabled = false;
       }
     });
 
     refreshModeUi();
+    setCrawlUiState(false);
     refreshBrowserSession();
     window.setInterval(() => {
       refreshBrowserSession(true);

@@ -11,6 +11,7 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
+from core.crawl_control import raise_if_stop_requested, sleep_with_stop
 from core.browser_runtime import NHATOT_USER_DATA_DIR
 from core.browser_runtime import build_driver as build_browser_driver
 from core.browser_session import wait_for_user_action
@@ -145,7 +146,7 @@ def wait_for_page_ready(driver: webdriver.Chrome) -> None:
         if title and not is_security_verification_page(driver) and title.lower() != "www.nhatot.com":
             log("Da thay title chi tiet.")
             return
-        time.sleep(0.25)
+        sleep_with_stop(0.25)
 
     log("Trang dang o man hinh security verification.")
     log("Hay hoan tat xac minh trong browser/noVNC, sau do bam nut tiep tuc tren Web UI.")
@@ -162,7 +163,7 @@ def wait_for_page_ready(driver: webdriver.Chrome) -> None:
         if title and not is_security_verification_page(driver) and title.lower() != "www.nhatot.com":
             log("Da thay title chi tiet.")
             return
-        time.sleep(0.25)
+        sleep_with_stop(0.25)
 
     raise RuntimeError("Khong vuot qua duoc security verification hoac khong thay title tren trang NhaTot.")
 
@@ -188,7 +189,7 @@ def dismiss_cookie_banner(driver: webdriver.Chrome) -> None:
                     continue
                 driver.execute_script("arguments[0].click();", element)
                 log("Da dong cookie banner.")
-                time.sleep(0.15)
+                sleep_with_stop(0.15)
                 return
         except WebDriverException:
             pass
@@ -481,14 +482,15 @@ def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
 
     for element in get_phone_reveal_candidates(driver)[:4]:
         try:
+            raise_if_stop_requested()
             log("Dang click nut hien so.")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-            time.sleep(0.15)
+            sleep_with_stop(0.15)
             try:
                 element.click()
             except WebDriverException:
                 driver.execute_script("arguments[0].click();", element)
-            time.sleep(0.35)
+            sleep_with_stop(0.35)
 
             phone = scan_phone_from_dom(driver)
             if phone:
@@ -508,9 +510,10 @@ def ensure_detail_page_ready(driver: webdriver.Chrome, url: str) -> None:
     dismiss_cookie_banner(driver)
     deadline = time.time() + 4
     while time.time() < deadline:
+        raise_if_stop_requested()
         if get_title(driver) and (get_price(driver) or get_area(driver) or has_visible_phone_button(driver)):
             return
-        time.sleep(0.2)
+        sleep_with_stop(0.2)
 
 
 def extract_detail_fields(driver: webdriver.Chrome, url: str) -> dict:

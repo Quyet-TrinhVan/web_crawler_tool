@@ -8,6 +8,7 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
+from core.crawl_control import raise_if_stop_requested, sleep_with_stop
 from core.browser_runtime import BATDONGSAN_USER_DATA_DIR
 from core.browser_runtime import build_driver as build_browser_driver
 from core.browser_session import wait_for_user_action
@@ -184,7 +185,7 @@ def wait_for_listing_ready(driver: webdriver.Chrome) -> None:
             except WebDriverException:
                 current_title = ""
             log(f"Van dang cho verification. title={current_title!r}")
-        time.sleep(1.5)
+        sleep_with_stop(1.5)
 
     log("Trang dang o man hinh security verification.")
     log("Hay hoan tat xac minh trong browser/noVNC, sau do bam nut tiep tuc tren Web UI.")
@@ -201,7 +202,7 @@ def wait_for_listing_ready(driver: webdriver.Chrome) -> None:
             return
         if not is_security_verification_page(driver):
             return
-        time.sleep(1)
+        sleep_with_stop(1)
 
     raise RuntimeError("Khong vuot qua duoc security verification page.")
 
@@ -221,7 +222,7 @@ def dismiss_cookie_banner(driver: webdriver.Chrome) -> None:
                     continue
                 driver.execute_script("arguments[0].click();", element)
                 log("Da dong cookie banner.")
-                time.sleep(0.5)
+                sleep_with_stop(0.5)
                 return
         except WebDriverException:
             pass
@@ -384,6 +385,7 @@ def text_looks_like_masked_phone(text: str | None) -> bool:
 
 def wait_for_phone_state(element) -> None:
     for _ in range(10):
+        raise_if_stop_requested()
         phone = extract_phone_from_element(element)
         if phone:
             return
@@ -397,7 +399,7 @@ def wait_for_phone_state(element) -> None:
         except WebDriverException:
             pass
 
-        time.sleep(0.3)
+        sleep_with_stop(0.3)
 
 
 def extract_phone_from_ancestors(element) -> str | None:
@@ -451,7 +453,7 @@ def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
         try:
             log(f"Thu click nut hien so {idx}/{len(elements)}.")
             driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-            time.sleep(0.5)
+            sleep_with_stop(0.5)
             try:
                 element.click()
             except WebDriverException:
@@ -496,7 +498,7 @@ def ensure_authenticated_listing_page(driver: webdriver.Chrome, url: str) -> Non
 
 def extract_detail_fields(driver: webdriver.Chrome, url: str) -> dict:
     log("Trang san sang. Bat dau doc thong tin tin dang.")
-    time.sleep(2.5)
+    sleep_with_stop(2.5)
 
     log("Dang doc title.")
     title = get_title(driver)

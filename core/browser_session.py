@@ -3,6 +3,7 @@ import uuid
 from datetime import UTC, datetime
 from threading import Condition
 
+from core.crawl_control import raise_if_stop_requested
 from core.browser_runtime import get_novnc_url, get_profile_dir
 
 
@@ -131,6 +132,7 @@ def wait_for_user_action(
         SESSION_CONDITION.notify_all()
 
         while True:
+            raise_if_stop_requested()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 SESSION_STATE["status"] = "failed"
@@ -140,6 +142,7 @@ def wait_for_user_action(
                 raise RuntimeError(SESSION_STATE["message"])
 
             SESSION_CONDITION.wait(timeout=min(0.5, remaining))
+            raise_if_stop_requested()
 
             if SESSION_STATE["session_id"] != session_id:
                 raise RuntimeError("Browser session da bi thay doi trong luc crawler dang cho xac minh.")

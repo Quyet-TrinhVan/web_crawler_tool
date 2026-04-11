@@ -9,6 +9,7 @@ import pandas as pd
 from selenium.common.exceptions import WebDriverException
 
 from core.browser_session import wait_for_user_action
+from core.crawl_control import raise_if_stop_requested, sleep_with_stop
 from core.nhatot_detail_crawler import (
     SOURCE_NAME,
     build_driver,
@@ -125,10 +126,11 @@ def wait_for_listing_ready(driver) -> None:
     log("[list_crawler] Dang cho trang danh sach san sang.")
     deadline = time.time() + 15
     while time.time() < deadline:
+        raise_if_stop_requested()
         if is_listing_content_ready(driver):
             log("[list_crawler] Da thay noi dung danh sach.")
             return
-        time.sleep(0.25)
+        sleep_with_stop(0.25)
 
     log("[list_crawler] Trang dang o man hinh security verification hoac chua hien danh sach.")
     log("[list_crawler] Hay hoan tat xac minh trong browser/noVNC, sau do bam nut tiep tuc tren Web UI.")
@@ -141,10 +143,11 @@ def wait_for_listing_ready(driver) -> None:
 
     deadline = time.time() + 20
     while time.time() < deadline:
+        raise_if_stop_requested()
         if is_listing_content_ready(driver):
             log("[list_crawler] Da thay noi dung danh sach.")
             return
-        time.sleep(0.25)
+        sleep_with_stop(0.25)
 
     raise RuntimeError("Khong the tai noi dung trang danh sach NhaTot.")
 
@@ -178,7 +181,7 @@ def discover_listing_links_on_page(driver, start_url: str, page_number: int) -> 
     driver.get(page_url)
     wait_for_listing_ready(driver)
     dismiss_cookie_banner(driver)
-    time.sleep(0.35)
+    sleep_with_stop(0.35)
 
     page_links = collect_detail_links_from_page(driver)
     log(f"[list_crawler] Tim thay {len(page_links)} link tin tren trang {page_number}.")
@@ -199,6 +202,7 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
         log(f"[list_crawler] Tong so tin se crawl o trang {page_number}: {len(detail_urls)}")
 
         for index, detail_url in enumerate(detail_urls, start=1):
+            raise_if_stop_requested()
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
                 row = attach_source(crawl_detail_with_driver(driver, detail_url))

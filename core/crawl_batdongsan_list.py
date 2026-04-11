@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 import pandas as pd
 from selenium.common.exceptions import WebDriverException
 
+from core.crawl_control import raise_if_stop_requested, sleep_with_stop
 from core.detail_crawler import (
     build_driver,
     clean_text,
@@ -139,7 +140,7 @@ def is_hanoi_location(location: str | None) -> bool:
 def anti_spam_pause(label: str, delay_range: tuple[float, float]) -> None:
     delay = random.uniform(*delay_range)
     log(f"[list_crawler] Tam dung {delay:.1f}s de giam tan suat request ({label}).")
-    time.sleep(delay)
+    sleep_with_stop(delay)
 
 
 def has_meaningful_detail_data(row: dict | None) -> bool:
@@ -165,6 +166,7 @@ def crawl_detail_with_retries(driver, detail_url: str, max_attempts: int = MAX_D
     last_row: dict | None = None
 
     for attempt in range(1, max_attempts + 1):
+        raise_if_stop_requested()
         try:
             row = crawl_detail_with_driver(driver, detail_url)
             last_row = row
@@ -177,7 +179,7 @@ def crawl_detail_with_retries(driver, detail_url: str, max_attempts: int = MAX_D
                     f"[list_crawler] Tin {detail_url} du lieu chua day du"
                     f" (attempt {attempt}/{max_attempts}), thu lai sau {DETAIL_RETRY_DELAY_SECONDS:.0f}s."
                 )
-                time.sleep(DETAIL_RETRY_DELAY_SECONDS)
+                sleep_with_stop(DETAIL_RETRY_DELAY_SECONDS)
         except Exception as exc:
             if attempt >= max_attempts:
                 raise
@@ -185,7 +187,7 @@ def crawl_detail_with_retries(driver, detail_url: str, max_attempts: int = MAX_D
                 f"[list_crawler] Loi tam thoi voi {detail_url} (attempt {attempt}/{max_attempts}): {exc}."
                 f" Thu lai sau {DETAIL_RETRY_DELAY_SECONDS:.0f}s."
             )
-            time.sleep(DETAIL_RETRY_DELAY_SECONDS)
+            sleep_with_stop(DETAIL_RETRY_DELAY_SECONDS)
 
     return last_row if has_meaningful_detail_data(last_row) else None
 
@@ -243,6 +245,7 @@ def discover_listing_links_on_page(driver, start_url: str, page_number: int) -> 
     if page_number < 1:
         raise ValueError("page_number phai >= 1")
 
+    raise_if_stop_requested()
     page_url = build_paginated_url(start_url, page_number)
     log(f"[list_crawler] Mo trang danh sach {page_number}: {page_url}")
     driver.get(page_url)
@@ -262,6 +265,7 @@ def discover_listing_links(driver, start_url: str, max_pages: int | None) -> lis
     page_number = 1
 
     while True:
+        raise_if_stop_requested()
         if max_pages is not None and page_number > max_pages:
             break
 
@@ -308,6 +312,7 @@ def get_fallback_category_urls() -> list[str]:
 
 def discover_batdongsan_category_urls(driver) -> list[str]:
     log("[list_crawler] Mo homepage Batdongsan de khoi tao session.")
+    raise_if_stop_requested()
     driver.get(HOME_URL)
     wait_for_listing_ready(driver)
     dismiss_cookie_banner(driver)
@@ -431,6 +436,7 @@ def crawl_category_for_today(
     skipped_non_hanoi = 0
 
     while True:
+        raise_if_stop_requested()
         page_url = build_paginated_url(category_url, page_number)
         log(f"[list_crawler] Mo category page {page_number}: {page_url}")
         driver.get(page_url)
@@ -451,6 +457,7 @@ def crawl_category_for_today(
             break
 
         for entry in new_entries:
+            raise_if_stop_requested()
             seen_detail_urls.add(entry["url"])
             anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
             log(f"[list_crawler] Crawl tin hom nay: {entry['url']}")
@@ -493,6 +500,7 @@ def crawl_categories_for_today(output_path: Path | None = None) -> list[dict]:
         category_urls = discover_batdongsan_category_urls(driver)
 
         for index, category_url in enumerate(category_urls, start=1):
+            raise_if_stop_requested()
             log(f"[list_crawler] Crawl category {index}/{len(category_urls)}: {category_url}")
             try:
                 stats = crawl_category_for_today(
@@ -527,6 +535,7 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
 
     try:
         log(f"[list_crawler] Mo URL bat dau: {start_url}")
+        raise_if_stop_requested()
         driver.get(start_url)
         wait_for_listing_ready(driver)
         dismiss_cookie_banner(driver)
@@ -541,6 +550,7 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
         log(f"[list_crawler] Tong so tin se crawl o trang {page_number}: {len(detail_urls)}")
 
         for index, detail_url in enumerate(detail_urls, start=1):
+            raise_if_stop_requested()
             anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
@@ -570,6 +580,7 @@ def crawl_listing(start_url: str, output_path: Path, max_pages: int | None, limi
 
     try:
         log(f"[list_crawler] Mo URL bat dau: {start_url}")
+        raise_if_stop_requested()
         driver.get(start_url)
         wait_for_listing_ready(driver)
         dismiss_cookie_banner(driver)
@@ -587,6 +598,7 @@ def crawl_listing(start_url: str, output_path: Path, max_pages: int | None, limi
         log(f"[list_crawler] Tong so tin se crawl: {len(detail_urls)}")
 
         for index, detail_url in enumerate(detail_urls, start=1):
+            raise_if_stop_requested()
             anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
             log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
             try:
