@@ -11,7 +11,7 @@ Project hien tai ho tro:
 - crawl 1 trang danh sach va tu lay link detail trong trang do
 - crawl Batdongsan theo che do `today` tren nhieu category
 - xuat CSV encoding `utf-8-sig` de mo bang Excel
-- chay Web UI de login/crawl trong browser noVNC va tai CSV truc tiep
+- chay Web UI de login/crawl trong browser noVNC, dung crawl giua chung, va tai CSV truc tiep
 
 ## Yeu cau
 
@@ -56,7 +56,8 @@ Flow Batdongsan moi:
 3. Dang nhap/xac minh trong khung noVNC
 4. Bam `Toi da hoan tat, tiep tuc`
 5. Bat dau crawl
-6. Khi job xong, bam `Tai CSV` de tai file output
+6. Neu can, bam `Dung crawl` de dung job sau buoc dang chay hien tai
+7. Bam `Tai CSV` de tai file output, ke ca khi job da dung giua chung nhung da ghi duoc partial CSV
 
 Thu muc `browser_state/` duoc mount vao container de giu Chrome profile qua cac lan restart.
 Docker se dung profile rieng trong `browser_state/docker/` de tranh conflict voi Chrome/Chromium chay local tren Windows.
@@ -68,11 +69,16 @@ Web UI hien tai ho tro:
 - mo browser login Batdongsan trong container
 - theo doi log crawl realtime
 - resume sau khi tu xu ly Cloudflare/security verification
+- dung crawl job dang chay theo yeu cau nguoi dung
 - tai file CSV output truc tiep tu UI sau khi crawl xong
+- tai partial CSV neu job bi dung giua chung hoac bi loi sau khi da ghi du lieu tam
 
 Luu y:
 
-- nut `Tai CSV` chi xuat hien sau khi job crawl thanh cong
+- nut `Tai CSV` xuat hien khi da co file CSV hop le de tai
+- nut `Dung crawl` gui yeu cau dung job. Crawler se dung o diem kiem tra tiep theo, khong phai kill cung luc tuc thi
+- neu da crawl duoc vi du 200 records roi user bam dung, UI se cho tai file CSV chua 200 records do
+- neu job bi loi nhung file CSV da duoc ghi truoc do, UI van giu link download partial CSV
 - file duoc tai tu duong dan `output` ma ban nhap tren form
 - chi cac file nam trong thu muc project moi duoc phep download qua API
 
@@ -236,8 +242,9 @@ CSV duoc ghi voi encoding `utf-8-sig`.
 
 Neu chay bang Web UI:
 
-- sau khi crawl xong, UI se hien ten file output
-- bam `Tai CSV` de download file ve may
+- khi crawl thanh cong, UI se hien ten file output va link `Tai CSV`
+- khi bam `Dung crawl`, neu da co du lieu duoc ghi ra file thi UI van hien link `Tai CSV`
+- khi crawl bi loi, neu da co partial CSV thi UI van cho download phan da crawl duoc
 
 Neu chay bang CLI, co the doc nhanh 5 dong dau:
 
