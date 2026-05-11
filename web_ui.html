@@ -29,7 +29,7 @@
     }
     .layout {
       width: 100%;
-      max-width: 1180px;
+      max-width: 100%;
       margin: 0 auto;
       display: grid;
       grid-template-columns: 420px 1fr;
@@ -191,7 +191,7 @@
     }
     .browser-frame {
       width: 100%;
-      height: 680px;
+      height: calc(100vh - 120px);
       border: 0;
       border-radius: 12px;
       background: #071122;
@@ -244,7 +244,7 @@
     <div class="card">
       <div class="card-body">
         <h1>Web Crawler UI</h1>
-        <p>Chay crawler trong container va thao tac browser qua noVNC khi can login hoac vuot security verification.</p>
+        <p>Chon cach crawl truoc, sau do login trong browser incognito qua noVNC va crawler se tiep tuc tren chinh phien do.</p>
 
         <div class="browser-meta">
           <div id="browser-status" class="status-pill">idle</div>
@@ -253,7 +253,7 @@
           <a id="browser-link" class="browser-link" href="#" target="_blank" rel="noopener noreferrer">Mo noVNC trong tab moi</a>
 
           <div class="browser-actions">
-            <button id="login-start-btn" class="btn-secondary" type="button">Mo browser login</button>
+            <button id="login-start-btn" class="btn-secondary" type="button">Mo browser login rieng</button>
             <button id="login-complete-btn" class="btn-secondary" type="button">Toi da hoan tat, tiep tuc</button>
             <button id="login-stop-btn" class="btn-danger full" type="button">Dung browser session</button>
           </div>
@@ -312,7 +312,7 @@
     <div class="card">
       <div class="card-body" style="padding-bottom: 12px;">
         <h2>Browser noVNC</h2>
-        <p>Browser Selenium chay trong container. Khi UI bao can thao tac tay, ban login hoac vuot verification ngay trong khung nay.</p>
+        <p>Browser incognito chay trong container. Sau khi login/xac minh xong, crawler se attach vao chinh browser nay.</p>
       </div>
       <div class="browser-frame-wrap">
         <iframe id="browser-frame" class="browser-frame" title="Browser noVNC"></iframe>
@@ -347,6 +347,7 @@
     let browserSession = null;
     let currentJobId = null;
     let crawlStopRequested = false;
+    let pendingCrawlPayload = null;
 
     function setResult(message, ok, warning = false) {
       result.textContent = message;
@@ -371,7 +372,7 @@
     }
 
     function setCrawlUiState(running) {
-      submitBtn.disabled = running;
+      submitBtn.disabled = running || Boolean(pendingCrawlPayload);
       stopCrawlBtn.disabled = !running || crawlStopRequested || !currentJobId;
     }
 
@@ -425,10 +426,11 @@
       const isBatdongsan = source.value === "batdongsan.com";
       const needsManualAction = ["needs_user_action", "waiting_for_verification"].includes(session.status);
       const canStop = session.login_driver_open || needsManualAction || ["ready", "failed"].includes(session.status);
+      const crawlRunning = Boolean(currentJobId);
 
-      loginStartBtn.disabled = !isBatdongsan || needsManualAction || session.login_driver_open;
+      loginStartBtn.disabled = crawlRunning || !isBatdongsan || needsManualAction || session.login_driver_open;
       loginCompleteBtn.disabled = !needsManualAction;
-      loginStopBtn.disabled = !canStop;
+      loginStopBtn.disabled = crawlRunning || !canStop;
     }
 
     function renderBrowserSession(session) {
@@ -595,13 +597,37 @@
     });
 
     loginCompleteBtn.addEventListener("click", async () => {
-      await callBrowserApi(
-        "/api/browser/session/complete",
-        "Dang danh dau da hoan tat login/xac minh...",
-      );
+      loginStartBtn.disabled = true;
+      loginCompleteBtn.disabled = true;
+      loginStopBtn.disabled = true;
+      setResult("Dang xac nhan login/xac minh...", true, true);
+
+      try {
+        const response = await fetch("/api/browser/session/complete", { method: "POST" });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Loi khong xac dinh");
+        }
+        renderBrowserSession(data);
+
+        if (pendingCrawlPayload) {
+          const payload = pendingCrawlPayload;
+          pendingCrawlPayload = null;
+          setResult("Da xac nhan. Dang crawl tren browser incognito hien tai...", true, true);
+          setStreamLog("Da xac nhan login/xac minh.\nDang bat dau crawl tren browser incognito hien tai...");
+          await startCrawlStream(payload);
+        } else {
+          setResult(data.message || `Browser session: ${data.status}`, true);
+        }
+      } catch (error) {
+        setResult(`That bai: ${error.message}`, false);
+      } finally {
+        updateBrowserControls();
+      }
     });
 
     loginStopBtn.addEventListener("click", async () => {
+      pendingCrawlPayload = null;
       await callBrowserApi("/api/browser/session/stop", "Dang dung browser session...");
     });
 
@@ -651,8 +677,25 @@
       }
 
       try {
-        await startCrawlStream(payload);
+        if (payload.source === "batdongsan.com") {
+          pendingCrawlPayload = payload;
+          await callBrowserApi(
+            "/api/browser/session/start",
+            "Dang mo browser incognito de login/xac minh truoc khi crawl...",
+            { source: "batdongsan.com", mode: "login" },
+          );
+          setResult(
+            "Hay login/xac minh trong browser incognito tren noVNC, roi bam 'Toi da hoan tat, tiep tuc' de crawl.",
+            true,
+            true,
+          );
+          setStreamLog("Dang cho ban login/xac minh trong browser incognito...");
+          setCrawlUiState(false);
+        } else {
+          await startCrawlStream(payload);
+        }
       } catch (error) {
+        pendingCrawlPayload = null;
         finishCrawlSession();
         setResult(`That bai: ${error.message}`, false);
       }

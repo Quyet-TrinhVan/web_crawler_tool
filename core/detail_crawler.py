@@ -35,6 +35,7 @@ PHONE_ATTRIBUTE_NAMES = (
     "aria-label",
     "title",
 )
+PHONE_REVEAL_WAIT_SECONDS = float(os.getenv("PHONE_REVEAL_WAIT_SECONDS", "10"))
 
 SECURITY_PAGE_MARKERS = (
     "performing security verification",
@@ -384,7 +385,9 @@ def text_looks_like_masked_phone(text: str | None) -> bool:
 
 
 def wait_for_phone_state(element) -> None:
-    for _ in range(10):
+    deadline = time.monotonic() + PHONE_REVEAL_WAIT_SECONDS
+    logged_state_change = False
+    while time.monotonic() < deadline:
         raise_if_stop_requested()
         phone = extract_phone_from_element(element)
         if phone:
@@ -395,7 +398,9 @@ def wait_for_phone_state(element) -> None:
             class_name = element.get_attribute("class") or ""
             text = (clean_text(element.text) or "").lower()
             if data_click == "true" or "showHotline" in class_name or "sao ch" in text or "copy" in text:
-                return
+                if not logged_state_change:
+                    log("Nut hien so da doi trang thai, tiep tuc cho so dien thoai render.")
+                    logged_state_change = True
         except WebDriverException:
             pass
 
@@ -431,6 +436,41 @@ def extract_phone_from_ancestors(element) -> str | None:
     return None
 
 
+def extract_phone_from_visible_phone_area(driver: webdriver.Chrome) -> str | None:
+    for element in visible_elements(driver, PHONE_BUTTON_SELECTORS, max_count=8):
+        phone = extract_phone_from_element(element)
+        if phone:
+            return phone
+
+        phone = extract_phone_from_ancestors(element)
+        if phone:
+            return phone
+
+    return extract_phone_from_page(driver, include_page_source=True)
+
+
+def wait_for_phone_after_click(driver: webdriver.Chrome, element) -> str | None:
+    deadline = time.monotonic() + PHONE_REVEAL_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        raise_if_stop_requested()
+
+        phone = extract_phone_from_element(element)
+        if phone:
+            return phone
+
+        phone = extract_phone_from_ancestors(element)
+        if phone:
+            return phone
+
+        phone = extract_phone_from_visible_phone_area(driver)
+        if phone:
+            return phone
+
+        sleep_with_stop(0.35)
+
+    return extract_phone_from_visible_phone_area(driver)
+
+
 def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
     log("Dang tim nut hien so.")
     elements = visible_elements(driver, PHONE_BUTTON_SELECTORS, max_count=5)
@@ -464,23 +504,13 @@ def click_show_phone_and_get(driver: webdriver.Chrome) -> str | None:
         log("Da click nut hien so, dang cho trang thai cap nhat.")
         wait_for_phone_state(element)
 
-        phone = extract_phone_from_element(element)
+        phone = wait_for_phone_after_click(driver, element)
         if phone:
             log("Da lay duoc so dien thoai sau khi click.")
             return phone
 
-        phone = extract_phone_from_ancestors(element)
-        if phone:
-            log("Da lay duoc so dien thoai tu the cha sau khi click.")
-            return phone
-
-        phone = extract_phone_from_page(driver)
-        if phone:
-            log("Da lay duoc so dien thoai tu noi dung trang sau khi click.")
-            return phone
-
     log("Khong lay duoc so tren button, thu fallback doc toan trang dang hien.")
-    return extract_phone_from_page(driver)
+    return extract_phone_from_page(driver, include_page_source=True)
 
 
 def ensure_authenticated_listing_page(driver: webdriver.Chrome, url: str) -> None:

@@ -1,6 +1,9 @@
 import csv
 import json
+import os
 import queue
+import signal
+import subprocess
 import threading
 import uuid
 from contextlib import redirect_stderr, redirect_stdout
@@ -18,19 +21,22 @@ from core.browser_session import (
     reset_session,
     set_session_state,
 )
+from core.browser_runtime import WINDOW_SIZE, build_attached_driver, cleanup_profile_locks, get_profile_dir
 from core.crawl_control import CrawlStoppedError, crawl_stop_context, raise_if_stop_requested
 from core.crawl_batdongsan_list import (
     crawl_categories_for_today as crawl_batdongsan_categories_for_today,
     crawl_listing_page as crawl_batdongsan_listing_page,
 )
 from core.crawl_nhatot_list import crawl_listing_page as crawl_nhatot_listing_page
-from core.login_batdongsan import HOME_URL, build_driver as build_batdongsan_login_driver
+from core.login_batdongsan import HOME_URL
 from main import normalize_rows, save_rows
 
 
 app = FastAPI(title="Web Crawler UI")
 WORKSPACE_ROOT = Path.cwd().resolve()
-LOGIN_DRIVER = None
+LOGIN_BROWSER_PROCESS: subprocess.Popen | None = None
+LOGIN_DEBUGGER_HOST = os.getenv("LOGIN_DEBUGGER_HOST", "127.0.0.1")
+LOGIN_DEBUGGER_PORT = os.getenv("LOGIN_DEBUGGER_PORT", "9222")
 LOGIN_LOCK = Lock()
 JOB_LOCK = Lock()
 CRAWL_RUN_LOCK = Lock()
@@ -159,11 +165,79 @@ def _build_partial_output(path_value: str | None) -> dict | None:
     }
 
 
+def _login_browser_is_open() -> bool:
+    return LOGIN_BROWSER_PROCESS is not None and LOGIN_BROWSER_PROCESS.poll() is None
+
+
+def _build_manual_browser_command(source: str) -> list[str]:
+    user_data_dir = get_profile_dir(source)
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+    cleanup_profile_locks(user_data_dir)
+
+    chrome_binary = os.getenv("CHROME_BINARY", "/usr/bin/chromium")
+    return [
+        chrome_binary,
+        f"--user-data-dir={user_data_dir.resolve()}",
+        "--profile-directory=Default",
+        "--incognito",
+        f"--remote-debugging-address={LOGIN_DEBUGGER_HOST}",
+        f"--remote-debugging-port={LOGIN_DEBUGGER_PORT}",
+        f"--window-size={WINDOW_SIZE}",
+        "--lang=vi-VN",
+        "--no-sandbox",
+        HOME_URL,
+    ]
+
+
+def _open_manual_login_browser(source: str) -> subprocess.Popen:
+    env = os.environ.copy()
+    env.setdefault("DISPLAY", ":99")
+    return subprocess.Popen(  # noqa: S603
+        _build_manual_browser_command(source),
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def _close_manual_login_browser(source: str = "batdongsan.com") -> None:
+    global LOGIN_BROWSER_PROCESS
+
+    process = LOGIN_BROWSER_PROCESS
+    LOGIN_BROWSER_PROCESS = None
+
+    if process is not None and process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            process.terminate()
+
+        try:
+            process.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError:
+                process.kill()
+            process.wait(timeout=3)
+
+    cleanup_profile_locks(get_profile_dir(source))
+
+
+def _build_login_browser_driver():
+    return build_attached_driver(f"{LOGIN_DEBUGGER_HOST}:{LOGIN_DEBUGGER_PORT}")
+
+
 def _browser_session_response(request: Request) -> dict:
     host, scheme = _request_origin(request)
     state = get_session_state(host=host, scheme=scheme)
     with LOGIN_LOCK:
-        login_driver_open = LOGIN_DRIVER is not None
+        login_driver_open = _login_browser_is_open()
     state["login_driver_open"] = login_driver_open
     return state
 
@@ -176,7 +250,7 @@ def _validate_browser_start_request(payload: BrowserSessionStartRequest) -> None
 
 
 def _start_browser_session(payload: BrowserSessionStartRequest, request: Request) -> dict:
-    global LOGIN_DRIVER
+    global LOGIN_BROWSER_PROCESS
 
     _validate_browser_start_request(payload)
     host, scheme = _request_origin(request)
@@ -186,7 +260,7 @@ def _start_browser_session(payload: BrowserSessionStartRequest, request: Request
             source=payload.source,
             mode=payload.mode,
             status="needs_user_action",
-            message="Browser da mo trong container. Hay dang nhap/xac minh trong noVNC, roi bam nut tiep tuc.",
+            message="Browser login thu cong da mo trong noVNC. Hay tu dang nhap/xac minh, sau do bam nut tiep tuc.",
             host=host,
             scheme=scheme,
         )
@@ -194,15 +268,14 @@ def _start_browser_session(payload: BrowserSessionStartRequest, request: Request
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     with LOGIN_LOCK:
-        if LOGIN_DRIVER is not None:
+        if _login_browser_is_open():
             fail_session("Dang co browser login session khac dang mo.")
             raise HTTPException(status_code=409, detail="Dang co mot browser login session dang mo.")
 
         try:
-            LOGIN_DRIVER = build_batdongsan_login_driver()
-            LOGIN_DRIVER.get(HOME_URL)
+            LOGIN_BROWSER_PROCESS = _open_manual_login_browser(payload.source)
         except Exception as exc:
-            LOGIN_DRIVER = None
+            LOGIN_BROWSER_PROCESS = None
             fail_session(f"Khong mo duoc browser login: {exc}")
             raise HTTPException(status_code=500, detail=f"Khong mo duoc browser login: {exc}") from exc
 
@@ -210,20 +283,13 @@ def _start_browser_session(payload: BrowserSessionStartRequest, request: Request
 
 
 def _complete_browser_session(request: Request) -> dict:
-    global LOGIN_DRIVER
-
     with LOGIN_LOCK:
-        if LOGIN_DRIVER is not None:
-            try:
-                LOGIN_DRIVER.quit()
-            except Exception as exc:
-                LOGIN_DRIVER = None
-                fail_session(f"Khong dong duoc browser login: {exc}")
-                raise HTTPException(status_code=500, detail=f"Khong dong duoc browser login: {exc}") from exc
-            LOGIN_DRIVER = None
+        if not _login_browser_is_open():
+            fail_session("Browser login da dong truoc khi bat dau crawl.")
+            raise HTTPException(status_code=400, detail="Browser login da dong truoc khi bat dau crawl.")
 
     try:
-        mark_session_ready("Nguoi dung da hoan tat login/xac minh. Crawler co the tiep tuc.")
+        mark_session_ready("Nguoi dung da hoan tat login/xac minh. Crawler se tiep tuc tren browser incognito hien tai.")
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -231,19 +297,14 @@ def _complete_browser_session(request: Request) -> dict:
 
 
 def _stop_browser_session(request: Request) -> dict:
-    global LOGIN_DRIVER
-
     stop_message = "Browser session da dung theo yeu cau nguoi dung."
 
     with LOGIN_LOCK:
-        if LOGIN_DRIVER is not None:
-            try:
-                LOGIN_DRIVER.quit()
-            except Exception as exc:
-                LOGIN_DRIVER = None
-                fail_session(f"Khong dong duoc browser login: {exc}")
-                raise HTTPException(status_code=500, detail=f"Khong dong duoc browser login: {exc}") from exc
-            LOGIN_DRIVER = None
+        try:
+            _close_manual_login_browser()
+        except Exception as exc:
+            fail_session(f"Khong dong duoc browser login: {exc}")
+            raise HTTPException(status_code=500, detail=f"Khong dong duoc browser login: {exc}") from exc
 
     state = _browser_session_response(request)
     if state["status"] in {"needs_user_action", "waiting_for_verification"}:
@@ -261,7 +322,10 @@ def _validate_request(payload: CrawlRequest) -> None:
 
     if payload.source == "batdongsan.com":
         with LOGIN_LOCK:
-            if LOGIN_DRIVER is not None:
+            session_status = get_session_state()["status"]
+            if session_status in {"needs_user_action", "waiting_for_verification"} or (
+                _login_browser_is_open() and session_status != "ready"
+            ):
                 raise HTTPException(
                     status_code=409,
                     detail="Dang co browser login Batdongsan dang mo. Hay bam nut tiep tuc hoac dung session truoc khi crawl.",
@@ -288,17 +352,40 @@ def _execute_crawl(payload: CrawlRequest) -> dict:
     output_path = Path(payload.output)
     page_url = payload.page_url
     page_number = payload.page_number
+    attached_driver = None
+    close_manual_browser_after_crawl = False
 
-    if payload.date == "today":
-        rows = crawl_batdongsan_categories_for_today(output_path=output_path)
-    else:
-        if page_url is None or page_number is None:
-            raise HTTPException(status_code=400, detail="thieu page_url hoac page_number")
-        crawler = {
-            "batdongsan.com": crawl_batdongsan_listing_page,
-            "nhatot.com": crawl_nhatot_listing_page,
-        }[payload.source]
-        rows = crawler(page_url, page_number=page_number, output_path=output_path)
+    try:
+        if payload.source == "batdongsan.com":
+            with LOGIN_LOCK:
+                if _login_browser_is_open() and get_session_state()["status"] == "ready":
+                    attached_driver = _build_login_browser_driver()
+                    close_manual_browser_after_crawl = True
+
+        if payload.date == "today":
+            rows = crawl_batdongsan_categories_for_today(output_path=output_path, driver=attached_driver)
+        else:
+            if page_url is None or page_number is None:
+                raise HTTPException(status_code=400, detail="thieu page_url hoac page_number")
+            if payload.source == "batdongsan.com":
+                rows = crawl_batdongsan_listing_page(
+                    page_url,
+                    page_number=page_number,
+                    output_path=output_path,
+                    driver=attached_driver,
+                )
+            else:
+                rows = crawl_nhatot_listing_page(page_url, page_number=page_number, output_path=output_path)
+    finally:
+        if attached_driver is not None:
+            try:
+                attached_driver.quit()
+            except Exception:
+                pass
+        if close_manual_browser_after_crawl:
+            with LOGIN_LOCK:
+                _close_manual_login_browser(payload.source)
+            reset_session("Browser incognito da dong sau khi crawl ket thuc.")
 
     raise_if_stop_requested()
     normalized_rows = normalize_rows(rows, source=payload.source)

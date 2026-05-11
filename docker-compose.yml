@@ -10,6 +10,7 @@ services:
       BROWSER_PROFILE_NAMESPACE: docker
       NOVNC_PUBLIC_URL: http://localhost:6080/vnc.html?autoconnect=1&resize=remote
       MANUAL_ACTION_TIMEOUT_SECONDS: "900"
+      PHONE_REVEAL_WAIT_SECONDS: "15"
     volumes:
       - ./browser_state:/app/browser_state
     shm_size: "1gb"

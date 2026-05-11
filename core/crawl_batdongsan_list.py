@@ -27,39 +27,40 @@ DETAIL_URL_RE = re.compile(r"^https://(?:www\.)?batdongsan\.com\.vn/[^?#\s]*-pr\
 DETAIL_PATH_RE = re.compile(r"https://(?:www\.)?batdongsan\.com\.vn/[^\"'?#\s]*-pr\d+(?:\?[^\"'#\s]*)?", re.IGNORECASE)
 DETAIL_RELATIVE_PATH_RE = re.compile(r"/[^\"'?#\s]*-pr\d+(?:\?[^\"'#\s]*)?", re.IGNORECASE)
 RELATIVE_TODAY_RE = re.compile(r"\b\d+\s*(phut|gio)\s*truoc\b", re.IGNORECASE)
+RELATIVE_OLDER_RE = re.compile(r"\b(hom qua|\d+\s*ngay\s*truoc)\b", re.IGNORECASE)
 ABSOLUTE_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 DEFAULT_OUTPUT = Path("batdongsan_list_detail.csv")
 SOURCE_NAME = "batdongsan.com"
 OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
-PAGE_SETTLE_DELAY_RANGE_SECONDS = (10.0, 14.0)
-DETAIL_DELAY_RANGE_SECONDS = (8.0, 15.0)
-DETAIL_RETRY_DELAY_SECONDS = 5.0
+PAGE_SETTLE_DELAY_RANGE_SECONDS = (15.0, 20.0)
+DETAIL_DELAY_RANGE_SECONDS = (15.0, 20.0)
+DETAIL_RETRY_DELAY_SECONDS = 10.0
 MAX_DETAIL_ATTEMPTS = 3
 
 FALLBACK_CATEGORY_PATHS = [
-    "/ban-can-ho-chung-cu",
-    "/ban-chung-cu-mini-can-ho-dich-vu",
-    "/ban-nha-rieng",
-    "/ban-nha-biet-thu-lien-ke",
-    "/ban-nha-mat-pho",
-    "/ban-shophouse-nha-pho-thuong-mai",
-    "/ban-dat-nen-du-an",
-    "/ban-dat",
-    "/ban-trang-trai-khu-nghi-duong",
-    "/ban-condotel",
-    "/ban-kho-nha-xuong",
-    "/ban-loai-bat-dong-san-khac",
-    "/cho-thue-can-ho-chung-cu",
-    "/cho-thue-chung-cu-mini-can-ho-dich-vu",
-    "/cho-thue-nha-rieng",
-    "/cho-thue-nha-biet-thu-lien-ke",
-    "/cho-thue-nha-mat-pho",
-    "/cho-thue-shophouse-nha-pho-thuong-mai",
-    "/cho-thue-nha-tro-phong-tro",
-    "/cho-thue-van-phong",
-    "/cho-thue-sang-nhuong-cua-hang-ki-ot",
-    "/cho-thue-kho-nha-xuong-dat",
-    "/cho-thue-loai-bat-dong-san-khac",
+    "/ban-can-ho-chung-cu-ha-noi",
+    "/ban-chung-cu-mini-can-ho-dich-vu-ha-noi",
+    "/ban-nha-rieng-ha-noi",
+    "/ban-nha-biet-thu-lien-ke-ha-noi",
+    "/ban-nha-mat-pho-ha-noi",
+    "/ban-shophouse-nha-pho-thuong-mai-ha-noi",
+    "/ban-dat-nen-du-an-ha-noi",
+    "/ban-dat-ha-noi",
+    "/ban-trang-trai-khu-nghi-duong-ha-noi",
+    "/ban-condotel-ha-noi",
+    "/ban-kho-nha-xuong-ha-noi",
+    "/ban-loai-bat-dong-san-khac-ha-noi",
+    "/cho-thue-can-ho-chung-cu-ha-noi",
+    "/cho-thue-chung-cu-mini-can-ho-dich-vu-ha-noi",
+    "/cho-thue-nha-rieng-ha-noi",
+    "/cho-thue-nha-biet-thu-lien-ke-ha-noi",
+    "/cho-thue-nha-mat-pho-ha-noi",
+    "/cho-thue-shophouse-nha-pho-thuong-mai-ha-noi",
+    "/cho-thue-nha-tro-phong-tro-ha-noi",
+    "/cho-thue-van-phong-ha-noi",
+    "/cho-thue-sang-nhuong-cua-hang-ki-ot-ha-noi",
+    "/cho-thue-kho-nha-xuong-dat-ha-noi",
+    "/cho-thue-loai-bat-dong-san-khac-ha-noi",
 ]
 
 
@@ -130,11 +131,6 @@ def attach_source(row: dict, listing_date: str | None = None, category_url: str 
     normalized_row["listing_date"] = listing_date
     normalized_row["category_url"] = category_url
     return normalized_row
-
-
-def is_hanoi_location(location: str | None) -> bool:
-    normalized = normalize_search_text(location)
-    return "ha noi" in normalized if normalized else False
 
 
 def anti_spam_pause(label: str, delay_range: tuple[float, float]) -> None:
@@ -365,9 +361,32 @@ def extract_today_listing_label(text: str | None, target_date: date | None = Non
     return None
 
 
-def collect_listing_cards_with_date(driver, target_date: date | None = None) -> list[dict]:
+def has_older_listing_label(text: str | None, target_date: date | None = None) -> bool:
+    if not text:
+        return False
+
+    target_date = target_date or date.today()
+    normalized = normalize_search_text(text)
+
+    if RELATIVE_OLDER_RE.search(normalized):
+        return True
+
+    absolute_match = ABSOLUTE_DATE_RE.search(normalized)
+    if not absolute_match:
+        return False
+
+    try:
+        parsed = datetime.strptime(absolute_match.group(1), "%d/%m/%Y").date()
+    except ValueError:
+        return False
+
+    return parsed < target_date
+
+
+def collect_listing_cards_with_date(driver, target_date: date | None = None) -> dict:
     target_date = target_date or date.today()
     listing_cards: dict[str, dict] = {}
+    has_older_listing = False
 
     try:
         raw_cards = driver.execute_script(
@@ -400,27 +419,34 @@ def collect_listing_cards_with_date(driver, target_date: date | None = None) -> 
         raw_cards = []
 
     for raw_card in raw_cards or []:
+        card_text = raw_card.get("text", "") if isinstance(raw_card, dict) else ""
+        if has_older_listing_label(card_text, target_date=target_date):
+            has_older_listing = True
+
         href = raw_card.get("href") if isinstance(raw_card, dict) else None
         normalized_url = normalize_detail_url(href)
         if not normalized_url:
             continue
 
-        listing_date = extract_today_listing_label(raw_card.get("text"), target_date=target_date)
+        listing_date = extract_today_listing_label(card_text, target_date=target_date)
         if not listing_date:
             continue
 
         current = listing_cards.get(normalized_url)
-        if current is None or len(raw_card.get("text", "")) > len(current.get("raw_text", "")):
+        if current is None or len(card_text) > len(current.get("raw_text", "")):
             listing_cards[normalized_url] = {
                 "url": normalized_url,
                 "listing_date": listing_date,
-                "raw_text": raw_card.get("text", ""),
+                "raw_text": card_text,
             }
 
-    return [
-        {"url": entry["url"], "listing_date": entry["listing_date"]}
-        for entry in listing_cards.values()
-    ]
+    return {
+        "today_entries": [
+            {"url": entry["url"], "listing_date": entry["listing_date"]}
+            for entry in listing_cards.values()
+        ],
+        "has_older_listing": has_older_listing,
+    }
 
 
 def crawl_category_for_today(
@@ -433,7 +459,6 @@ def crawl_category_for_today(
     target_date = date.today()
     page_number = 1
     crawled_count = 0
-    skipped_non_hanoi = 0
 
     while True:
         raise_if_stop_requested()
@@ -444,12 +469,15 @@ def crawl_category_for_today(
         dismiss_cookie_banner(driver)
         anti_spam_pause("sau khi mo category page", PAGE_SETTLE_DELAY_RANGE_SECONDS)
 
-        today_entries = collect_listing_cards_with_date(driver, target_date=target_date)
+        page_listing_state = collect_listing_cards_with_date(driver, target_date=target_date)
+        today_entries = page_listing_state["today_entries"]
+        has_older_listing = page_listing_state["has_older_listing"]
         new_entries = [entry for entry in today_entries if entry["url"] not in seen_detail_urls]
 
         log(
             f"[list_crawler] Category {category_url} page {page_number}: "
-            f"{len(today_entries)} tin hom nay, {len(new_entries)} link moi."
+            f"{len(today_entries)} tin hom nay, {len(new_entries)} link moi, "
+            f"co tin cu hon hom nay={has_older_listing}."
         )
 
         if not today_entries:
@@ -470,10 +498,6 @@ def crawl_category_for_today(
                     continue
 
                 row = attach_source(detail_row, listing_date=entry["listing_date"], category_url=category_url)
-                if not is_hanoi_location(row.get("location")):
-                    skipped_non_hanoi += 1
-                    log(f"[list_crawler] Bo qua tin khong thuoc Ha Noi: {entry['url']}")
-                    continue
                 rows.append(row)
                 crawled_count += 1
                 if output_path is not None:
@@ -482,19 +506,24 @@ def crawl_category_for_today(
                 log(f"[list_crawler] Loi voi {entry['url']}: {exc}")
 
         page_number += 1
+        if has_older_listing:
+            log(f"[list_crawler] Category {category_url} da gap tin cu hon hom nay, dung phan trang.")
+            break
 
     return {
         "crawled_count": crawled_count,
-        "skipped_non_hanoi": skipped_non_hanoi,
     }
 
 
-def crawl_categories_for_today(output_path: Path | None = None) -> list[dict]:
-    log("[list_crawler] Khoi tao Chrome cho che do --date today.")
-    driver = build_driver()
+def crawl_categories_for_today(output_path: Path | None = None, driver=None) -> list[dict]:
+    owns_driver = driver is None
+    if owns_driver:
+        log("[list_crawler] Khoi tao Chrome cho che do --date today.")
+        driver = build_driver()
+    else:
+        log("[list_crawler] Dung browser login hien tai cho che do --date today.")
     rows: list[dict] = []
     seen_detail_urls: set[str] = set()
-    total_skipped_non_hanoi = 0
 
     try:
         category_urls = discover_batdongsan_category_urls(driver)
@@ -510,27 +539,29 @@ def crawl_categories_for_today(output_path: Path | None = None) -> list[dict]:
                     rows=rows,
                     output_path=output_path,
                 )
-                total_skipped_non_hanoi += stats["skipped_non_hanoi"]
                 log(
                     f"[list_crawler] Hoan tat category {category_url}. "
-                    f"Da crawl {stats['crawled_count']} tin hom nay, "
-                    f"bo qua {stats['skipped_non_hanoi']} tin ngoai Ha Noi."
+                    f"Da crawl {stats['crawled_count']} tin hom nay."
                 )
             except Exception as exc:
                 log(f"[list_crawler] Loi category {category_url}: {exc}")
 
-        log(f"[list_crawler] Tong so tin bi bo qua vi khong thuoc Ha Noi: {total_skipped_non_hanoi}")
         return rows
     finally:
-        driver.quit()
+        if owns_driver:
+            driver.quit()
 
 
-def crawl_listing_page(start_url: str, page_number: int, output_path: Path | None = None) -> list[dict]:
+def crawl_listing_page(start_url: str, page_number: int, output_path: Path | None = None, driver=None) -> list[dict]:
     if page_number < 1:
         raise ValueError("page_number phai >= 1")
 
-    log("[list_crawler] Khoi tao Chrome.")
-    driver = build_driver()
+    owns_driver = driver is None
+    if owns_driver:
+        log("[list_crawler] Khoi tao Chrome.")
+        driver = build_driver()
+    else:
+        log("[list_crawler] Dung browser login hien tai.")
     rows: list[dict] = []
 
     try:
@@ -570,7 +601,8 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
 
         return rows
     finally:
-        driver.quit()
+        if owns_driver:
+            driver.quit()
 
 
 def crawl_listing(start_url: str, output_path: Path, max_pages: int | None, limit: int | None) -> list[dict]:

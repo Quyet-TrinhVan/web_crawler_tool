@@ -97,3 +97,16 @@ def build_driver(user_data_dir: Path, *, page_load_strategy: str = "normal") -> 
         },
     )
     return driver
+
+
+def build_attached_driver(debugger_address: str, *, page_load_strategy: str = "normal") -> webdriver.Chrome:
+    options = Options()
+    options.page_load_strategy = page_load_strategy
+    options.add_experimental_option("debuggerAddress", debugger_address)
+
+    chrome_binary = os.getenv("CHROME_BINARY")
+    if chrome_binary:
+        options.binary_location = chrome_binary
+
+    service = Service(executable_path=os.getenv("CHROMEDRIVER_PATH")) if os.getenv("CHROMEDRIVER_PATH") else Service()
+    return webdriver.Chrome(service=service, options=options)

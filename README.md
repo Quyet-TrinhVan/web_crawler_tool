@@ -140,8 +140,10 @@ uv run main.py --source batdongsan.com --date today --output batdongsan_today.cs
 Trong mode nay:
 
 - script duyet danh sach category co san trong code
+- category Batdongsan dung san cac path Ha Noi co duoi `-ha-noi`
 - chi giu cac tin dang trong ngay hien tai
-- chi giu tin co `location` thuoc Ha Noi
+- khong loc lai theo `location`; khu vuc Ha Noi da nam trong URL category
+- voi moi category, script quet tiep page sau khi page hien tai con tin hom nay va dung khi gap tin cu hon hom nay
 - `--page-url` va `--page-number` khong can truyen
 
 ## Batdongsan: login truoc khi crawl
