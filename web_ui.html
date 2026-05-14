@@ -272,6 +272,7 @@
             <label for="mode">Mode</label>
             <select id="mode" name="mode">
               <option value="page">Theo page</option>
+              <option value="page_today">Theo page - hom nay</option>
               <option value="today">Today (chi batdongsan)</option>
             </select>
           </div>
@@ -282,8 +283,13 @@
           </div>
 
           <div id="page-number-wrap">
-            <label for="page_number">Page number</label>
+            <label for="page_number">Start page</label>
             <input id="page_number" name="page_number" type="number" min="1" value="1" />
+          </div>
+
+          <div id="page-end-wrap">
+            <label for="page_end">End page</label>
+            <input id="page_end" name="page_end" type="number" min="1" placeholder="De trong neu chi 1 page" />
           </div>
 
           <div>
@@ -326,8 +332,10 @@
     const mode = document.getElementById("mode");
     const pageUrlWrap = document.getElementById("page-url-wrap");
     const pageNumberWrap = document.getElementById("page-number-wrap");
+    const pageEndWrap = document.getElementById("page-end-wrap");
     const pageUrl = document.getElementById("page_url");
     const pageNumber = document.getElementById("page_number");
+    const pageEnd = document.getElementById("page_end");
     const output = document.getElementById("output");
     const submitBtn = document.getElementById("submit-btn");
     const stopCrawlBtn = document.getElementById("stop-crawl-btn");
@@ -413,8 +421,9 @@
       const isToday = mode.value === "today";
       pageUrlWrap.style.display = isToday ? "none" : "block";
       pageNumberWrap.style.display = isToday ? "none" : "block";
+      pageEndWrap.style.display = isToday ? "none" : "block";
 
-      if (isToday && source.value !== "batdongsan.com") {
+      if ((isToday || mode.value === "page_today") && source.value !== "batdongsan.com") {
         source.value = "batdongsan.com";
       }
 
@@ -674,6 +683,10 @@
       } else {
         payload.page_url = pageUrl.value.trim();
         payload.page_number = Number(pageNumber.value || 1);
+        if (pageEnd.value.trim()) {
+          payload.page_end = Number(pageEnd.value);
+        }
+        payload.today_only = mode.value === "page_today";
       }
 
       try {

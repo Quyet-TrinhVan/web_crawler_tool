@@ -307,6 +307,42 @@ def get_location(driver: webdriver.Chrome) -> str | None:
     return None
 
 
+def get_listing_date(driver: webdriver.Chrome) -> str | None:
+    try:
+        listing_date = driver.execute_script(
+            """
+            const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+            const items = Array.from(document.querySelectorAll(
+                '[class*="short-info-item"], [class*="pr-config-item"]'
+            ));
+
+            for (const item of items) {
+                const title = normalize(
+                    (item.querySelector('.title, [class*="title"]') || {}).innerText ||
+                    (item.querySelector('.title, [class*="title"]') || {}).textContent
+                );
+                if (!/ngày đăng|ngay dang/i.test(title)) {
+                    continue;
+                }
+
+                const valueNode = item.querySelector('.value, [class*="value"]');
+                const value = normalize(valueNode && (valueNode.innerText || valueNode.textContent));
+                if (value) {
+                    return value;
+                }
+            }
+
+            return null;
+            """
+        )
+        if listing_date:
+            return clean_text(listing_date)
+    except WebDriverException:
+        pass
+
+    return get_labeled_value(driver, ["Ngày đăng", "Ngay dang"])
+
+
 def first_visible_element(driver: webdriver.Chrome, selectors: list[str]):
     for selector in selectors:
         try:
@@ -546,6 +582,10 @@ def extract_detail_fields(driver: webdriver.Chrome, url: str) -> dict:
     area = get_labeled_value(driver, ["Diện tích"])
     log(f"Area: {area!r}")
 
+    log("Dang doc ngay dang.")
+    listing_date = get_listing_date(driver)
+    log(f"Listing date: {listing_date!r}")
+
     log("Dang doc phone.")
     phone = click_show_phone_and_get(driver)
     log(f"Ket qua tam thoi: title={title!r}, phone={phone!r}")
@@ -559,6 +599,7 @@ def extract_detail_fields(driver: webdriver.Chrome, url: str) -> dict:
         "location": location,
         "phone": phone,
         "price": price,
+        "listing_date": listing_date,
         "url": url,
     }
 

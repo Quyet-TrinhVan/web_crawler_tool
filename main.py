@@ -10,7 +10,7 @@ from core.crawl_batdongsan_list import (
 from core.crawl_nhatot_list import crawl_listing_page as crawl_nhatot_listing_page
 
 
-ROW_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
+ROW_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url", "url"]
 
 
 def log(message: str) -> None:

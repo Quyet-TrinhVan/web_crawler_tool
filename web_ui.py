@@ -48,7 +48,9 @@ class CrawlRequest(BaseModel):
     output: str
     page_url: str | None = None
     page_number: int | None = None
+    page_end: int | None = None
     date: str | None = None
+    today_only: bool = False
 
 
 class CrawlStartResponse(BaseModel):
@@ -334,16 +336,23 @@ def _validate_request(payload: CrawlRequest) -> None:
     if payload.date == "today":
         if payload.source != "batdongsan.com":
             raise HTTPException(status_code=400, detail="date=today chi ho tro cho batdongsan.com")
+        if payload.today_only:
+            raise HTTPException(status_code=400, detail="today_only khong dung chung voi date=today")
         return
 
     if payload.date is not None:
         raise HTTPException(status_code=400, detail="date chi ho tro gia tri today")
+
+    if payload.today_only and payload.source != "batdongsan.com":
+        raise HTTPException(status_code=400, detail="today_only chi ho tro cho batdongsan.com")
 
     if not payload.page_url:
         raise HTTPException(status_code=400, detail="page_url la bat buoc neu khong dung today")
 
     if payload.page_number is None or payload.page_number < 1:
         raise HTTPException(status_code=400, detail="page_number phai >= 1")
+    if payload.page_end is not None and payload.page_end < payload.page_number:
+        raise HTTPException(status_code=400, detail="page_end phai >= page_number")
 
 
 def _execute_crawl(payload: CrawlRequest) -> dict:
@@ -352,6 +361,7 @@ def _execute_crawl(payload: CrawlRequest) -> dict:
     output_path = Path(payload.output)
     page_url = payload.page_url
     page_number = payload.page_number
+    page_end = payload.page_end
     attached_driver = None
     close_manual_browser_after_crawl = False
 
@@ -373,6 +383,8 @@ def _execute_crawl(payload: CrawlRequest) -> dict:
                     page_number=page_number,
                     output_path=output_path,
                     driver=attached_driver,
+                    today_only=payload.today_only,
+                    page_end=page_end,
                 )
             else:
                 rows = crawl_nhatot_listing_page(page_url, page_number=page_number, output_path=output_path)

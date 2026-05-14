@@ -31,7 +31,7 @@ RELATIVE_OLDER_RE = re.compile(r"\b(hom qua|\d+\s*ngay\s*truoc)\b", re.IGNORECAS
 ABSOLUTE_DATE_RE = re.compile(r"\b(\d{1,2}/\d{1,2}/\d{4})\b")
 DEFAULT_OUTPUT = Path("batdongsan_list_detail.csv")
 SOURCE_NAME = "batdongsan.com"
-OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
+OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url", "url"]
 PAGE_SETTLE_DELAY_RANGE_SECONDS = (15.0, 20.0)
 DETAIL_DELAY_RANGE_SECONDS = (15.0, 20.0)
 DETAIL_RETRY_DELAY_SECONDS = 10.0
@@ -128,7 +128,7 @@ def save_results(rows: list[dict], output_path: Path) -> None:
 def attach_source(row: dict, listing_date: str | None = None, category_url: str | None = None) -> dict:
     normalized_row = dict(row)
     normalized_row["source"] = SOURCE_NAME
-    normalized_row["listing_date"] = listing_date
+    normalized_row["listing_date"] = listing_date if listing_date is not None else row.get("listing_date")
     normalized_row["category_url"] = category_url
     return normalized_row
 
@@ -391,27 +391,37 @@ def collect_listing_cards_with_date(driver, target_date: date | None = None) -> 
     try:
         raw_cards = driver.execute_script(
             """
-            const anchors = Array.from(document.querySelectorAll('a[href]'));
-            return anchors.map((anchor) => {
-                const href = anchor.href || anchor.getAttribute('href') || '';
-                if (!/-pr\\d+(?:[?#]|$)/i.test(href)) {
-                    return null;
-                }
+            const dateNodes = Array.from(document.querySelectorAll(
+                '[class*="published-at"][aria-label], [aria-label][role="tooltip"]'
+            ));
 
-                let node = anchor;
-                let bestText = (anchor.innerText || anchor.textContent || '').trim();
-                for (let level = 0; node && level < 6; level += 1) {
-                    const candidate = (node.innerText || node.textContent || '').trim();
-                    if (candidate.length > bestText.length) {
-                        bestText = candidate;
-                    }
-                    if (candidate.length >= 200) {
+            return dateNodes.map((dateNode) => {
+                const dateLabel = dateNode.getAttribute('aria-label') || '';
+                let node = dateNode.parentElement;
+                let bestCard = null;
+
+                for (let level = 0; node && level < 8; level += 1) {
+                    const anchors = Array.from(node.querySelectorAll('a[href]')).filter((anchor) => {
+                        const href = anchor.href || anchor.getAttribute('href') || '';
+                        return /-pr\\d+(?:[?#]|$)/i.test(href);
+                    });
+
+                    if (anchors.length > 0 && anchors.length <= 5) {
+                        bestCard = { node, anchors };
                         break;
                     }
+
                     node = node.parentElement;
                 }
 
-                return { href, text: bestText };
+                if (!bestCard) {
+                    return null;
+                }
+
+                const anchor = bestCard.anchors[0];
+                const href = anchor.href || anchor.getAttribute('href') || '';
+                const text = (bestCard.node.innerText || bestCard.node.textContent || '').trim();
+                return { href, text, dateLabel };
             }).filter(Boolean);
             """
         )
@@ -420,7 +430,9 @@ def collect_listing_cards_with_date(driver, target_date: date | None = None) -> 
 
     for raw_card in raw_cards or []:
         card_text = raw_card.get("text", "") if isinstance(raw_card, dict) else ""
-        if has_older_listing_label(card_text, target_date=target_date):
+        date_label = raw_card.get("dateLabel", "") if isinstance(raw_card, dict) else ""
+        date_text = f"{date_label}\n{card_text}"
+        if has_older_listing_label(date_text, target_date=target_date):
             has_older_listing = True
 
         href = raw_card.get("href") if isinstance(raw_card, dict) else None
@@ -428,7 +440,7 @@ def collect_listing_cards_with_date(driver, target_date: date | None = None) -> 
         if not normalized_url:
             continue
 
-        listing_date = extract_today_listing_label(card_text, target_date=target_date)
+        listing_date = extract_today_listing_label(date_text, target_date=target_date)
         if not listing_date:
             continue
 
@@ -476,23 +488,24 @@ def crawl_category_for_today(
 
         log(
             f"[list_crawler] Category {category_url} page {page_number}: "
-            f"{len(today_entries)} tin hom nay, {len(new_entries)} link moi, "
+            f"{len(today_entries)} tin hom nay theo aria-label, {len(new_entries)} link moi, "
             f"co tin cu hon hom nay={has_older_listing}."
         )
 
         if not today_entries:
-            log(f"[list_crawler] Category {category_url} khong con tin hom nay, dung.")
+            log(f"[list_crawler] Category {category_url} khong con tin hom nay theo aria-label, dung.")
             break
 
         for entry in new_entries:
             raise_if_stop_requested()
-            seen_detail_urls.add(entry["url"])
+            detail_url = entry["url"]
+            seen_detail_urls.add(detail_url)
             anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
-            log(f"[list_crawler] Crawl tin hom nay: {entry['url']}")
+            log(f"[list_crawler] Crawl tin hom nay theo aria-label: {detail_url}")
             try:
-                detail_row = crawl_detail_with_retries(driver, entry["url"])
+                detail_row = crawl_detail_with_retries(driver, detail_url)
                 if not has_meaningful_detail_data(detail_row):
-                    log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {entry['url']}")
+                    log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {detail_url}")
                     continue
                 if detail_row is None:
                     continue
@@ -503,11 +516,11 @@ def crawl_category_for_today(
                 if output_path is not None:
                     save_results(rows, output_path)
             except Exception as exc:
-                log(f"[list_crawler] Loi voi {entry['url']}: {exc}")
+                log(f"[list_crawler] Loi voi {detail_url}: {exc}")
 
         page_number += 1
         if has_older_listing:
-            log(f"[list_crawler] Category {category_url} da gap tin cu hon hom nay, dung phan trang.")
+            log(f"[list_crawler] Category {category_url} da gap tin cu hon hom nay theo aria-label, dung phan trang.")
             break
 
     return {
@@ -552,9 +565,18 @@ def crawl_categories_for_today(output_path: Path | None = None, driver=None) -> 
             driver.quit()
 
 
-def crawl_listing_page(start_url: str, page_number: int, output_path: Path | None = None, driver=None) -> list[dict]:
+def crawl_listing_page(
+    start_url: str,
+    page_number: int,
+    output_path: Path | None = None,
+    driver=None,
+    today_only: bool = False,
+    page_end: int | None = None,
+) -> list[dict]:
     if page_number < 1:
         raise ValueError("page_number phai >= 1")
+    if page_end is not None and page_end < page_number:
+        raise ValueError("page_end phai >= page_number")
 
     owns_driver = driver is None
     if owns_driver:
@@ -577,27 +599,53 @@ def crawl_listing_page(start_url: str, page_number: int, output_path: Path | Non
                 "Hay chay `uv run -m core.login_batdongsan` bang cung browser profile roi thu lai."
             )
 
-        detail_urls = discover_listing_links_on_page(driver, start_url, page_number)
-        log(f"[list_crawler] Tong so tin se crawl o trang {page_number}: {len(detail_urls)}")
+        page_end = page_end or page_number
 
-        for index, detail_url in enumerate(detail_urls, start=1):
+        for current_page in range(page_number, page_end + 1):
             raise_if_stop_requested()
-            anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
-            log(f"[list_crawler] Crawl chi tiet {index}/{len(detail_urls)}: {detail_url}")
-            try:
-                detail_row = crawl_detail_with_retries(driver, detail_url)
-                if not has_meaningful_detail_data(detail_row):
-                    log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {detail_url}")
-                    continue
-                if detail_row is None:
-                    continue
+            if today_only:
+                page_url = build_paginated_url(start_url, current_page)
+                log(f"[list_crawler] Mo trang danh sach hom nay {current_page}: {page_url}")
+                driver.get(page_url)
+                wait_for_listing_ready(driver)
+                dismiss_cookie_banner(driver)
+                anti_spam_pause("sau khi mo trang danh sach hom nay", PAGE_SETTLE_DELAY_RANGE_SECONDS)
+                page_listing_state = collect_listing_cards_with_date(driver)
+                detail_entries = page_listing_state["today_entries"]
+                has_older_listing = page_listing_state["has_older_listing"]
+                log(
+                    f"[list_crawler] Trang {current_page}: tim thay {len(detail_entries)} tin hom nay theo aria-label, "
+                    f"co tin cu hon hom nay={has_older_listing}. Van tiep tuc den end page neu co."
+                )
+                if not detail_entries:
+                    log(f"[list_crawler] Trang {current_page} khong con tin hom nay theo aria-label, dung page range.")
+                    break
+            else:
+                detail_entries = [
+                    {"url": detail_url, "listing_date": None}
+                    for detail_url in discover_listing_links_on_page(driver, start_url, current_page)
+                ]
+            log(f"[list_crawler] Tong so tin se crawl o trang {current_page}: {len(detail_entries)}")
 
-                row = attach_source(detail_row)
-                rows.append(row)
-                if output_path is not None:
-                    save_results(rows, output_path)
-            except Exception as exc:
-                log(f"[list_crawler] Loi voi {detail_url}: {exc}")
+            for index, entry in enumerate(detail_entries, start=1):
+                raise_if_stop_requested()
+                detail_url = entry["url"]
+                anti_spam_pause("truoc khi vao detail", DETAIL_DELAY_RANGE_SECONDS)
+                log(f"[list_crawler] Crawl chi tiet trang {current_page} {index}/{len(detail_entries)}: {detail_url}")
+                try:
+                    detail_row = crawl_detail_with_retries(driver, detail_url)
+                    if not has_meaningful_detail_data(detail_row):
+                        log(f"[list_crawler] Bo qua tin vi du lieu rong/khong on dinh: {detail_url}")
+                        continue
+                    if detail_row is None:
+                        continue
+
+                    row = attach_source(detail_row, listing_date=entry.get("listing_date"))
+                    rows.append(row)
+                    if output_path is not None:
+                        save_results(rows, output_path)
+                except Exception as exc:
+                    log(f"[list_crawler] Loi voi {detail_url}: {exc}")
 
         return rows
     finally:

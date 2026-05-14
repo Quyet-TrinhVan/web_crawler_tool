@@ -28,7 +28,7 @@ DETAIL_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 DEFAULT_OUTPUT = Path("nhatot_list_detail.csv")
-OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url"]
+OUTPUT_COLUMNS = ["STT", "title", "area", "location", "phone", "price", "listing_date", "category_url", "url"]
 MANUAL_ACTION_TIMEOUT_SECONDS = float(os.getenv("MANUAL_ACTION_TIMEOUT_SECONDS", "900"))
 
 
