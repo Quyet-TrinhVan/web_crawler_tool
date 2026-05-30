@@ -104,15 +104,23 @@ def normalize_category_url(href: str | None, allowed_prefixes: tuple[str, ...] =
 
 
 def build_paginated_url(base_url: str, page_number: int) -> str:
-    if page_number <= 1:
-        return base_url
+    if page_number < 1:
+        raise ValueError("page_number phai >= 1")
 
     parts = urlsplit(base_url)
-    path = re.sub(r"/p\d+/?$", "", parts.path.rstrip("/"))
+    path = parts.path.rstrip("/")
     query_pairs = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key.lower() != "page"]
+
+    if page_number == 1 and not re.search(r"/p\d+/?$", path):
+        return base_url
+
+    path = re.sub(r"/p\d+/?$", "", path)
+    if page_number == 1:
+        return urlunsplit((parts.scheme, parts.netloc, path, urlencode(query_pairs, safe=","), ""))
+
     paginated_path = f"{path}/p{page_number}"
 
-    return urlunsplit((parts.scheme, parts.netloc, paginated_path, urlencode(query_pairs), ""))
+    return urlunsplit((parts.scheme, parts.netloc, paginated_path, urlencode(query_pairs, safe=","), ""))
 
 
 def save_results(rows: list[dict], output_path: Path) -> None:
